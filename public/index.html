@@ -1,28 +1,221 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Socialite</title><meta name="theme-color" content="#216C80"><link rel="icon" href="/favicon.ico?v=socialite-2" sizes="16x16 32x32 48x48 64x64"><link rel="icon" type="image/svg+xml" href="/favicon.svg?v=socialite-2" sizes="any"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=socialite-2"><link rel="stylesheet" href="/style.css"><script type="module" src="/app.js"></script></head>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Socialite</title>
+<meta name="color-scheme" content="dark">
+<meta name="theme-color" content="#0a0a0b">
+<link rel="icon" href="/favicon.ico?v=socialite-2" sizes="16x16 32x32 48x48 64x64">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=socialite-2" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=socialite-2">
+<link rel="preload" href="/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="preload" href="/fonts/geistmono.woff2" as="font" type="font/woff2" crossorigin>
+<link rel="stylesheet" href="/style.css">
+<script type="module" src="/app.js"></script>
+</head>
 <body>
-<header class="app-header"><a class="wordmark" href="#queue"><img class="wordmark-symbol" src="/logo.svg" alt="" width="40" height="40">Socialite<span class="wordmark-tag">Workspace</span></a><nav aria-label="Main navigation"><a href="#queue" data-nav="queue">Inbox <b id="nav-count">0</b></a><a href="#personality" data-nav="personality">AI voice & rules</a><a href="#connections" data-nav="connections">Connections</a><a href="#activity" data-nav="activity">Activity</a></nav></header>
-<div class="system-strip"><div class="system-accounts"><a href="#connections"><span id="rail-fb-dot" class="status-dot"></span><strong>Facebook</strong><span id="rail-fb-status">Not configured</span><span id="rail-fb-followers" class="follower-count" hidden></span><span id="rail-fb-updated" class="follower-updated" hidden></span></a><a href="#connections"><span id="rail-ai-dot" class="status-dot"></span><strong id="rail-ai-name">Hugging Face</strong><span id="rail-ai-status">Not connected</span></a></div><button type="button" id="live-switch" class="live-switch" role="switch" aria-checked="false" title="Live On: this app receives comments and drafts, posts and likes replies. Live Off: everything stops."><span class="live-track" aria-hidden="true"><span class="live-thumb"></span></span><span id="live-label">Live Off</span></button><span id="header-date"></span></div>
-<main><div id="notice" class="notice" hidden role="status"></div><span id="section-label" class="sr-only">Comment inbox</span>
-<section id="queue" class="view">
-<div class="page-heading"><div><div class="section-kicker">COMMUNITY MANAGEMENT</div><h1>Review. Reply. Connect.</h1><p>Your posts, their comments, your replies. One clear workspace.</p></div><button id="open-test" class="button primary">+ Test a comment</button></div>
-<div id="live-banner" class="live-banner" hidden><div><strong>Socialite is Live Off</strong><p id="live-banner-text">Nothing is drafted, posted or liked here, and new comments are not received.</p></div><button type="button" id="live-banner-on" class="button primary">Turn Live On</button></div><div id="connection-banner" class="connection-banner"><div><strong>Connect your accounts to get started</strong><p>Add your Facebook Page and Hugging Face Space.</p></div><a class="button" href="#connections">Open connections →</a></div>
-<div class="overview"><button id="show-new-comments" class="new-comments-metric" type="button" title="Comments waiting for a draft or your approval"><span class="metric-mark teal"></span><strong id="stat-new" aria-live="polite" aria-atomic="true">0</strong><span>New comments</span></button><div><span class="metric-mark blue"></span><strong id="stat-pending">0</strong><span>Awaiting approval</span></div><div><span class="metric-mark green"></span><strong id="stat-published">0</strong><span>Published replies</span></div><div><span class="metric-mark amber"></span><strong id="stat-errors">0</strong><span>Needs attention</span></div><span id="mode-label" class="mode-label">Approval required</span></div>
-<div class="inbox-tools"><div class="tabs" role="group" aria-label="Filter comments"><button data-filter="all" class="selected" aria-pressed="true">All comments</button><button data-filter="new" aria-pressed="false">New comments</button><button data-filter="pending" aria-pressed="false">Awaiting approval</button><button data-filter="published" aria-pressed="false">All published</button><button data-filter="approved" aria-pressed="false">Approved by you</button><button data-filter="automatic" aria-pressed="false">Automatically published</button><button data-filter="error" aria-pressed="false">Needs attention</button><button data-filter="rejected" aria-pressed="false">Dismissed replies</button><button data-filter="skipped" aria-pressed="false">No reply needed</button></div><label class="search-label"><span class="sr-only">Search comments</span><input id="comment-search" type="search" placeholder="Search comments, people or replies" aria-label="Search comments"></label></div>
-<div class="list-caption"><h2>Conversations <span id="inbox-count">0 comments</span></h2><div class="list-actions"><span>Review the context before publishing</span><button id="clear-comment-history" type="button" class="button danger" hidden>Clear all</button></div></div>
-<form id="test-form" class="panel" hidden><div class="panel-title"><h2>Try your AI personality</h2><button type="button" id="close-test" class="button quiet">Close</button></div><p>Test comments stay in this app. Approving a test never posts to Facebook.</p><label>Post caption or context<textarea name="context" rows="2" placeholder="What is this post or Reel about?"></textarea></label><label>Comment<textarea name="message" required rows="2" placeholder="Write a comment you would like your AI to answer…"></textarea></label><button class="button primary">Add test comment</button></form>
-<div id="comments" class="comments"></div>
-</section>
-<section id="personality" class="view" hidden><div class="page-heading"><div><h1>AI voice & publishing</h1><p>Define how your assistant speaks and when it can publish.</p></div></div>
-        <div class="settings-grid"><form id="personality-form" class="panel"><h2>Reply personality</h2><p class="intro">These instructions shape every new reply.</p><label>Personality & response rules<textarea id="personality-input" name="personality" rows="5" placeholder="Describe tone, language, humor, emojis, and what to avoid."></textarea></label><label>Approved business information<textarea id="knowledge-input" name="knowledge" rows="5" placeholder="Products, prices, FAQs, opening hours, links, and policies."></textarea><small>Keep these facts current. The AI is instructed to flag missing information.</small></label><label>Examples of replies you like<textarea id="examples-input" name="examples" rows="5" placeholder="Comment: Love this!&#10;Reply: Thank you! So glad you enjoyed it 💛"></textarea></label><label>Which comments deserve a reply?<textarea id="reply-policy-input" name="replyPolicy" rows="4" placeholder="Describe your Page topic and which comments should be answered or skipped."></textarea><small>Used to judge relevance for the connected Page before drafting.</small></label><label class="check-label"><input id="skip-emoji-input" name="skipEmojiOnly" type="checkbox">Skip emoji-only comments<small>Standalone emojis need no written reply. Your own grammar-only drafts still wait for approval.</small></label><button class="button primary">Save personality</button></form>
-        <form id="rules-form" class="panel"><h2>Publishing preferences</h2><label>Approval mode<select id="mode-input" name="mode"><option value="approval">Approval required for every reply</option><option value="hybrid">Hybrid — auto-publish routine replies</option><option value="automatic">Automatic — auto-publish eligible replies</option></select><small>Approval sends replies only when you approve. Hybrid auto-publishes routine replies. Automatic auto-publishes eligible replies. Unclear comments and sensitive replies always need your approval. Obvious nonsense and spam receive no reply. Replies written from your ideas and restored replies also need approval.</small></label><label>Minimum seconds between Facebook replies<input type="number" name="intervalSeconds" id="interval-input" min="10" max="3600"><small>This spaces consecutive replies. It is not a delay after each new comment arrives.</small></label><label>Minimum delay after a new comment arrives (seconds)<input type="number" name="commentDelaySeconds" id="comment-delay-input" min="0" max="3600" required><small>Drafts generate immediately. Publishing waits this long after Socialite receives the comment, and also respects the spacing between replies. Use 0 for no arrival delay.</small></label><label>Only these post / Reel IDs (optional)<textarea name="postIds" id="posts-input" rows="2" placeholder="Leave blank for all supported posts. Otherwise enter IDs separated by commas."></textarea></label><p class="hint">This version handles new top-level text comments. It uses the post caption as context, without watching the Reel.</p><button class="button primary">Save preferences</button></form>
-      </div><section class="panel memory-panel" aria-labelledby="memory-heading"><div class="panel-title"><div><h2 id="memory-heading">Reply memory</h2><p class="intro">Learn your voice from replies published through Socialite, for the connected Facebook Page.</p></div><button id="memory-toggle" type="button" class="button">Turn learning off</button></div><p id="memory-status" class="memory-status"></p><p id="memory-summary" class="hint"></p><p class="hint">Your full saved history shapes the style summary. Each draft uses up to five matching examples. Your personality stays in charge. Edited replies carry more weight than automatic replies. Turning learning off stops saving and using examples; existing memory stays here until you delete it.</p><div class="memory-toolbar"><strong>Published examples</strong><button id="memory-clear" type="button" class="button danger">Clear this Page's memory</button></div><div id="memory-list" class="memory-list"></div><div class="memory-pagination"><button id="memory-prev" type="button" class="button">Previous</button><span id="memory-page"></span><button id="memory-next" type="button" class="button">Next</button></div></section></section>
-<section id="connections" class="view" hidden><div class="page-heading"><div><h1>Account connections</h1><p>Manage the accounts used to read comments and write replies.</p></div></div>
-<form id="ai-provider-form" class="panel"><div class="panel-title"><h2><span class="connection-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 7l8-4 8 4-8 4-8-4z"/><path d="M4 12l8 4 8-4M4 17l8 4 8-4"/></svg></span> Reply AI: Hugging Face</h2><span id="provider-status" class="badge">Hugging Face</span></div><p class="panel-intro">Drafts are written by your own Hugging Face Space on a free ZeroGPU, using your personality and reply rules.</p><div class="two-col"><label>Space<input id="hf-space-input" name="hfSpace" placeholder="your-name/socialite-replies" autocomplete="off" spellcheck="false"></label><label>Access token<input id="hf-token-input" name="hfToken" type="password" autocomplete="off" placeholder="hf_… (leave blank to keep the saved token)"></label></div><p class="hint">GPU time counts against the account that owns the token, about 5 minutes a day on a free account. After a quiet period the Space sleeps, and the first reply takes a few minutes while it wakes up.</p><div class="panel-footer"><p id="local-saved" class="status-line"></p><div class="actions"><button id="check-hf" type="button" class="button quiet">Test connection</button><button class="button primary">Save Reply AI</button></div></div></form>
-<form id="facebook-form" class="panel"><div class="panel-title"><h2><span class="connection-icon facebook-icon">f</span> Facebook Page</h2><span id="fb-status" class="badge">Not configured</span></div><p class="panel-intro">Use credentials from your own Meta app.</p><div class="two-col"><label>Facebook Page ID<input id="page-input" name="pageId" placeholder="Your numeric Page ID" inputmode="numeric" required></label><label>Graph API version<input id="version-input" name="graphVersion" placeholder="Version shown in your Meta app" required></label></div><label>Page access token<input name="pageToken" type="password" autocomplete="off" placeholder="Paste a Page token; leave blank to keep the saved token"></label><label>Meta app secret<input name="appSecret" type="password" autocomplete="off" placeholder="Leave blank to keep the saved secret"></label><p class="hint">Credentials are stored encrypted on Cloudflare and never returned to the dashboard.</p><div class="actions"><button class="button primary">Save Facebook connection</button><button id="verify-fb" type="button" class="button quiet">Verify Page</button><button id="subscribe-fb" type="button" class="button quiet">Subscribe Page to comments</button></div></form>
-<div class="panel"><div class="panel-title"><h2><span class="connection-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h16v12H5.2L4 17.2V4z"/><path d="M8 9h8M8 12h5"/></svg></span> Receive new comments</h2><span id="webhook-status" class="badge">Not connected</span></div><p class="panel-intro">Meta sends new comments to this address while this app is Live On. Only one Socialite app is live at a time: this Cloudflare app or the local app on your PC.</p><label>Webhook address<div class="copy-row"><input id="webhook-address" readonly><button type="button" id="copy-webhook" class="button quiet">Copy</button></div></label><label>Webhook verify token<div class="copy-row"><input id="verify-token" readonly><button type="button" id="copy-token" class="button quiet">Copy</button></div></label><div class="panel-footer"><p id="webhook-line" class="status-line"></p><div class="actions"><button id="connect-webhook" type="button" class="button primary">Use this app for comments</button></div></div></div>
-<form id="password-form" class="panel"><div class="panel-title"><h2><span class="connection-icon"><svg class="icon" viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V7a4 4 0 0 1 8 0v4"/></svg></span> Account</h2></div><p class="panel-intro">This dashboard is on the internet, so it is protected by your password.</p><div class="two-col"><label>Current password<input name="current" type="password" autocomplete="current-password"></label><label>New password<input name="password" type="password" autocomplete="new-password" minlength="10"></label></div><div class="panel-footer"><p class="status-line">Changing the password signs out every device.</p><div class="actions"><button id="sign-out" type="button" class="button quiet">Sign out</button><button class="button primary">Change password</button></div></div></form>
-</section>
-<section id="activity" class="view" hidden><div class="page-heading"><div><h1>Activity log</h1><p>A record of drafts, published replies, and connection events.</p></div></div><div id="activity-list" class="panel"></div></section>
-<footer><strong>Socialite</strong><span>Local workspace · Your community, under your control</span></footer>
-</main></body></html>
+<a class="skip" href="#main">Skip to content</a>
+<div class="shell">
+
+<aside class="side" aria-label="Socialite">
+  <a class="brand" href="#queue"><img src="/logo.svg" alt="" width="22" height="22"><span>Socialite</span></a>
+
+  <section class="agent" aria-label="Agent status">
+    <button type="button" id="live-switch" class="agent-switch" role="switch" aria-checked="false" aria-describedby="agent-help">
+      <span class="pulse" aria-hidden="true"></span>
+      <span class="agent-copy"><span id="live-label" class="agent-state">Live Off</span><span id="agent-last" class="agent-last mono">No activity yet</span></span>
+      <span class="toggle" aria-hidden="true"></span>
+    </button>
+    <p id="agent-help" class="agent-help">On: receives comments, drafts, posts and likes. Off: everything stops.</p>
+  </section>
+
+  <nav class="nav" aria-label="Main">
+    <a href="#queue" data-nav="queue"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M2 9.5h3.2l1 1.8h3.6l1-1.8H14M2 9.5 3.6 3h8.8L14 9.5V13H2z"/></svg><span>Inbox</span><b id="nav-count" class="badge-n mono">0</b></a>
+    <a href="#personality" data-nav="personality"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M3 8h6M3 12h8"/></svg><span>Voice &amp; rules</span></a>
+    <a href="#connections" data-nav="connections"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 9.5 9.5 6.5M7 4.5l1.3-1.3a2.5 2.5 0 0 1 3.5 3.5L10.5 8M9 11.5l-1.3 1.3a2.5 2.5 0 0 1-3.5-3.5L5.5 8"/></svg><span>Connections</span></a>
+    <a href="#activity" data-nav="activity"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8h3l2-5 3 10 2-5h3"/></svg><span>Activity</span></a>
+  </nav>
+
+  <section class="health" aria-label="Connected accounts">
+    <h2 class="label">Connections</h2>
+    <a class="chip" href="#connections"><span id="rail-fb-dot" class="dot" aria-hidden="true"></span><span class="chip-body"><strong>Facebook</strong><span id="rail-fb-status">Not configured</span><span id="rail-fb-followers" class="chip-sub mono" hidden></span><span id="rail-fb-updated" class="chip-sub mono" hidden></span></span></a>
+    <a class="chip" href="#connections"><span id="rail-ai-dot" class="dot" aria-hidden="true"></span><span class="chip-body"><strong id="rail-ai-name">Hugging Face</strong><span id="rail-ai-status">Not connected</span></span></a>
+  </section>
+
+  <button type="button" id="open-palette" class="palette-btn"><span>Command</span><kbd class="mono">Ctrl K</kbd></button>
+  <p id="header-date" class="side-date mono"></p>
+</aside>
+
+<main id="main" class="main" tabindex="-1">
+  <div id="notice" class="toast" hidden role="status"></div>
+  <span id="section-label" class="sr-only">Comment inbox</span>
+
+  <section id="queue" class="view view-inbox" aria-labelledby="queue-title">
+    <header class="top">
+      <h1 id="queue-title" class="title">Inbox</h1>
+      <div class="top-tools"><button id="open-test" type="button" class="btn">New test comment</button></div>
+    </header>
+
+    <div id="live-banner" class="banner banner-off" hidden>
+      <span class="banner-dot" aria-hidden="true"></span>
+      <div><strong>Agent is off.</strong> <span id="live-banner-text">Nothing is drafted, posted or liked here, and new comments are not received.</span></div>
+      <button type="button" id="live-banner-on" class="btn btn-accent">Turn Live On</button>
+    </div>
+    <div id="connection-banner" class="banner">
+      <span class="banner-dot" aria-hidden="true"></span>
+      <div><strong>Connect your accounts to get started.</strong> Add your Facebook Page and your Hugging Face Space.</div>
+      <a class="btn" href="#connections">Open connections</a>
+    </div>
+
+    <div class="kpis" aria-label="Overview">
+      <button id="show-new-comments" class="kpi kpi-go" type="button" title="Comments waiting for a draft or your approval"><span class="kpi-label">New comments</span><strong id="stat-new" class="kpi-n mono" aria-live="polite" aria-atomic="true">0</strong><span id="delta-new" class="kpi-delta mono"></span><svg id="spark-new" class="spark" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
+      <div class="kpi"><span class="kpi-label">Awaiting approval</span><strong id="stat-pending" class="kpi-n mono">0</strong><span id="delta-pending" class="kpi-delta mono"></span><svg id="spark-pending" class="spark" viewBox="0 0 96 24" aria-hidden="true"></svg></div>
+      <div class="kpi"><span class="kpi-label">Published replies</span><strong id="stat-published" class="kpi-n mono">0</strong><span id="delta-published" class="kpi-delta mono"></span><svg id="spark-published" class="spark spark-ok" viewBox="0 0 96 24" aria-hidden="true"></svg></div>
+      <div class="kpi kpi-warn"><span class="kpi-label">Needs attention</span><strong id="stat-errors" class="kpi-n mono">0</strong><span id="delta-errors" class="kpi-delta mono"></span><svg id="spark-errors" class="spark spark-warn" viewBox="0 0 96 24" aria-hidden="true"></svg></div>
+      <div class="kpi kpi-mode"><span class="kpi-label">Publishing</span><strong id="mode-label">Approval required</strong><a href="#personality" class="kpi-link">Change</a></div>
+    </div>
+
+    <form id="test-form" class="drawer" hidden aria-labelledby="test-title">
+      <div class="drawer-head"><h2 id="test-title">Test comment</h2><button type="button" id="close-test" class="btn btn-ghost">Close <kbd class="mono">Esc</kbd></button></div>
+      <p class="hint">Stays in this app. Approving a test never posts to Facebook.</p>
+      <label class="field">Post caption or context<textarea name="context" rows="2" placeholder="What is this post or Reel about?"></textarea></label>
+      <label class="field">Comment<textarea name="message" required rows="3" placeholder="Write a comment you would like your AI to answer"></textarea></label>
+      <button type="submit" class="btn btn-accent">Add test comment</button>
+    </form>
+
+    <div id="workspace" class="workspace" data-pane="list">
+      <div class="list-col">
+        <div class="list-tools">
+          <div class="seg" role="group" aria-label="Filter comments">
+            <button type="button" data-filter="new" aria-pressed="false">New</button>
+            <button type="button" data-filter="pending" aria-pressed="false">Awaiting</button>
+            <button type="button" data-filter="published" aria-pressed="false">Published</button>
+            <button type="button" data-filter="error" aria-pressed="false">Attention</button>
+          </div>
+          <div class="more">
+            <button type="button" id="filter-more" class="btn btn-ghost more-btn" aria-haspopup="true" aria-expanded="false" aria-controls="filter-menu"><span id="filter-more-label">All comments</span><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button>
+            <div id="filter-menu" class="menu" role="group" aria-label="More filters" hidden>
+              <button type="button" data-filter="all" aria-pressed="true">All comments</button>
+              <button type="button" data-filter="approved" aria-pressed="false">Approved by you</button>
+              <button type="button" data-filter="automatic" aria-pressed="false">Automatically published</button>
+              <button type="button" data-filter="rejected" aria-pressed="false">Dismissed replies</button>
+              <button type="button" data-filter="skipped" aria-pressed="false">No reply needed</button>
+            </div>
+          </div>
+        </div>
+        <label class="search"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m10.5 10.5 3.5 3.5M7 11.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/></svg><span class="sr-only">Search comments</span><input id="comment-search" type="search" placeholder="Search comments, people or replies" aria-label="Search comments"><kbd class="mono">/</kbd></label>
+        <div class="list-meta"><h2>Conversations <span id="inbox-count" class="mono">0 comments</span></h2><button id="clear-comment-history" type="button" class="btn btn-ghost btn-danger" hidden>Clear all</button></div>
+        <div id="comment-rows" class="rows" role="listbox" aria-label="Conversations"></div>
+        <p class="keys mono"><kbd>J</kbd><kbd>K</kbd> move <kbd>E</kbd> edit <kbd>R</kbd> regenerate <kbd>A</kbd> approve</p>
+      </div>
+      <div id="comments" class="stage"></div>
+    </div>
+  </section>
+
+  <section id="personality" class="view" hidden aria-labelledby="voice-title">
+    <header class="top"><h1 id="voice-title" class="title">Voice &amp; rules</h1><p class="top-sub">How replies sound, and when they may publish without you.</p></header>
+    <div class="cols">
+      <form id="personality-form" class="panel">
+        <div class="panel-h"><h2>Reply personality</h2><span class="hint">Shapes every new reply</span></div>
+        <label class="field">Personality &amp; response rules<textarea id="personality-input" name="personality" rows="6" placeholder="Describe tone, language, humor, emojis, and what to avoid."></textarea></label>
+        <label class="field">Approved business information<textarea id="knowledge-input" name="knowledge" rows="4" placeholder="Products, prices, FAQs, opening hours, links, and policies."></textarea><small>Keep these facts current. The AI is told to flag missing information.</small></label>
+        <label class="field">Examples of replies you like<textarea id="examples-input" name="examples" rows="4" placeholder="Comment: Love this!&#10;Reply: Thank you! So glad you enjoyed it 💛"></textarea></label>
+        <label class="field">Which comments deserve a reply?<textarea id="reply-policy-input" name="replyPolicy" rows="3" placeholder="Describe your Page topic and which comments should be answered or skipped."></textarea><small>Used to judge relevance for the connected Page before drafting.</small></label>
+        <label class="check"><input id="skip-emoji-input" name="skipEmojiOnly" type="checkbox"><span>Skip emoji-only comments<small>Standalone emojis need no written reply. Your own grammar-only drafts still wait for approval.</small></span></label>
+        <div class="panel-f"><button type="submit" class="btn btn-accent">Save personality</button></div>
+      </form>
+      <form id="rules-form" class="panel">
+        <div class="panel-h"><h2>Publishing</h2></div>
+        <label class="field">Approval mode<select id="mode-input" name="mode">
+          <option value="approval">Approval required for every reply</option>
+          <option value="hybrid">Hybrid: auto-publish routine replies</option>
+          <option value="automatic">Automatic: auto-publish eligible replies</option>
+        </select><small>Approval sends replies only when you approve. Hybrid auto-publishes routine replies. Automatic auto-publishes eligible replies. Unclear comments and sensitive replies always need your approval. Obvious nonsense and spam receive no reply. Replies written from your ideas and restored replies also need approval.</small></label>
+        <div class="field-pair">
+          <label class="field">Seconds between replies<input type="number" name="intervalSeconds" id="interval-input" min="10" max="3600" class="mono"><small>Spaces consecutive replies. Not a delay after each new comment.</small></label>
+          <label class="field">Delay after a comment arrives (s)<input type="number" name="commentDelaySeconds" id="comment-delay-input" min="0" max="3600" required class="mono"><small>Drafts generate immediately; publishing waits this long. Use 0 for none.</small></label>
+        </div>
+        <label class="field">Only these post or Reel IDs (optional)<textarea name="postIds" id="posts-input" rows="2" class="mono" placeholder="Blank = all supported posts. Otherwise IDs separated by commas."></textarea></label>
+        <p class="hint">Handles new top-level text comments. Uses the post caption as context, without watching the Reel.</p>
+        <div class="panel-f"><button type="submit" class="btn btn-accent">Save preferences</button></div>
+      </form>
+    </div>
+    <section class="panel memory" aria-labelledby="memory-heading">
+      <div class="panel-h"><div><h2 id="memory-heading">Reply memory</h2><p class="hint">Learns your voice from replies published through Socialite, for the connected Facebook Page.</p></div><button id="memory-toggle" type="button" class="btn">Turn learning off</button></div>
+      <p id="memory-status" class="memory-status"></p>
+      <p id="memory-summary" class="hint"></p>
+      <p class="hint">Your full saved history shapes the style summary. Each draft uses up to five matching examples. Your personality stays in charge. Edited replies carry more weight than automatic replies. Turning learning off stops saving and using examples; existing memory stays here until you delete it.</p>
+      <div class="memory-bar"><h3>Published examples</h3><button id="memory-clear" type="button" class="btn btn-ghost btn-danger">Clear this Page's memory</button></div>
+      <div id="memory-list" class="memory-list"></div>
+      <div class="pager"><button id="memory-prev" type="button" class="btn">Previous</button><span id="memory-page" class="mono"></span><button id="memory-next" type="button" class="btn">Next</button></div>
+    </section>
+  </section>
+
+  <section id="connections" class="view" hidden aria-labelledby="conn-title">
+    <header class="top"><h1 id="conn-title" class="title">Connections</h1><p class="top-sub">Accounts that read comments and write replies.</p></header>
+
+    <form id="ai-provider-form" class="panel">
+      <div class="panel-h"><h2>Reply AI: Hugging Face</h2><span id="provider-status" class="pill">Hugging Face</span></div>
+      <p class="hint">Drafts are written by your own Hugging Face Space on a free ZeroGPU, using your personality and reply rules.</p>
+      <div class="field-pair">
+        <label class="field">Space<input id="hf-space-input" name="hfSpace" class="mono" placeholder="your-name/socialite-replies" autocomplete="off" spellcheck="false"></label>
+        <label class="field">Access token<input id="hf-token-input" name="hfToken" type="password" autocomplete="off" placeholder="hf_… (blank keeps the saved token)"></label>
+      </div>
+      <p class="hint">GPU time counts against the token's account, about 5 minutes a day on a free account. A sleeping Space takes a few minutes to wake on the first reply.</p>
+      <div class="panel-f panel-f-split">
+        <p id="local-saved" class="status"></p>
+        <div class="btns"><button id="check-hf" type="button" class="btn">Test connection</button><button type="submit" class="btn btn-accent">Save Reply AI</button></div>
+      </div>
+    </form>
+
+    <div class="panel">
+      <div class="panel-h"><h2>Receive new comments</h2><span id="webhook-status" class="pill">Live Off</span></div>
+      <p class="hint">Meta sends new comments to this address while this app is Live On. Only one Socialite app is live at a time: this Cloudflare app or the local app on your PC.</p>
+      <div class="field-pair">
+        <label class="field">Webhook address<span class="copy"><input id="webhook-address" class="mono" readonly><button type="button" id="copy-webhook" class="btn">Copy</button></span></label>
+        <label class="field">Webhook verify token<span class="copy"><input id="verify-token" class="mono" readonly><button type="button" id="copy-token" class="btn">Copy</button></span></label>
+      </div>
+      <div class="panel-f panel-f-split"><p id="webhook-line" class="status"></p><div class="btns"><button id="connect-webhook" type="button" class="btn btn-accent">Turn Live On</button></div></div>
+    </div>
+
+    <div class="cols">
+      <form id="facebook-form" class="panel">
+        <div class="panel-h"><h2>Facebook Page</h2><span id="fb-status" class="pill">Not configured</span></div>
+        <p class="hint">Credentials from your own Meta app.</p>
+        <div class="field-pair">
+          <label class="field">Page ID<input id="page-input" name="pageId" class="mono" placeholder="Numeric Page ID" inputmode="numeric" required></label>
+          <label class="field">Graph API version<input id="version-input" name="graphVersion" class="mono" placeholder="v24.0" required></label>
+        </div>
+        <label class="field">Page access token<input name="pageToken" type="password" autocomplete="off" placeholder="Paste a Page token; blank keeps the saved token"></label>
+        <label class="field">Meta app secret<input name="appSecret" type="password" autocomplete="off" placeholder="Blank keeps the saved secret"></label>
+        <p class="hint">Stored encrypted on Cloudflare and never returned to the dashboard.</p>
+        <div class="btns"><button type="submit" class="btn btn-accent">Save Facebook connection</button><button id="verify-fb" type="button" class="btn">Verify Page</button><button id="subscribe-fb" type="button" class="btn">Subscribe Page to comments</button></div>
+      </form>
+
+      <form id="password-form" class="panel">
+        <div class="panel-h"><h2>Account</h2></div>
+        <p class="hint">This dashboard is on the internet, so it is protected by your password.</p>
+        <label class="field">Current password<input name="current" type="password" autocomplete="current-password"></label>
+        <label class="field">New password<input name="password" type="password" autocomplete="new-password" minlength="10"><small>At least 10 characters. Changing it signs out every device.</small></label>
+        <div class="btns"><button type="submit" class="btn btn-accent">Change password</button><button id="sign-out" type="button" class="btn btn-ghost btn-danger">Sign out</button></div>
+      </form>
+    </div>
+  </section>
+
+  <section id="activity" class="view" hidden aria-labelledby="activity-title">
+    <header class="top"><h1 id="activity-title" class="title">Activity</h1><p class="top-sub">Drafts, published replies and connection events. Newest first.</p></header>
+    <div id="activity-list" class="panel log"></div>
+  </section>
+</main>
+</div>
+
+<div id="palette" class="palette" hidden>
+  <div class="palette-box" role="dialog" aria-modal="true" aria-label="Command palette">
+    <label class="palette-search"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m10.5 10.5 3.5 3.5M7 11.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/></svg><span class="sr-only">Type a command</span><input id="palette-input" type="text" placeholder="Type a command or search" autocomplete="off" role="combobox" aria-expanded="true" aria-controls="palette-list"></label>
+    <ul id="palette-list" class="palette-list" role="listbox" aria-label="Commands"></ul>
+    <p class="palette-foot mono"><kbd>↑</kbd><kbd>↓</kbd> choose <kbd>Enter</kbd> run <kbd>Esc</kbd> close</p>
+  </div>
+</div>
+</body>
+</html>

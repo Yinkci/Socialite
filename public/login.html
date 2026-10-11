@@ -1,16 +1,16 @@
 <!doctype html>
-<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · Socialite</title><meta name="theme-color" content="#216C80"><link rel="icon" href="/favicon.ico?v=socialite-2" sizes="16x16 32x32 48x48 64x64"><link rel="icon" type="image/svg+xml" href="/favicon.svg?v=socialite-2" sizes="any"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=socialite-2"><link rel="stylesheet" href="/style.css"><script type="module" src="/login.js"></script></head>
-<body class="login-page">
-<main class="login-shell">
-  <div class="login-brand"><img src="/logo.svg" alt="" width="44" height="44"><span>Socialite</span></div>
-  <form id="login-form" class="panel login-card" novalidate>
-    <h1 id="login-title">Sign in</h1>
-    <p id="login-intro" class="panel-intro">Enter your dashboard password.</p>
-    <label id="setup-label" hidden>Setup code<input id="setup-code" name="setupCode" autocomplete="off" spellcheck="false"><small>The one-time code from your setup message. It is only needed once.</small></label>
-    <label>Password<input id="password" name="password" type="password" autocomplete="current-password" required></label>
-    <label id="confirm-label" hidden>Confirm password<input id="confirm" type="password" autocomplete="new-password"></label>
-    <p id="login-error" class="status-line bad" hidden></p>
-    <button class="button primary login-submit">Sign in</button>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Sign in · Socialite</title><meta name="color-scheme" content="dark"><meta name="theme-color" content="#0a0a0b"><link rel="icon" href="/favicon.ico?v=socialite-2" sizes="16x16 32x32 48x48 64x64"><link rel="icon" type="image/svg+xml" href="/favicon.svg?v=socialite-2" sizes="any"><link rel="apple-touch-icon" href="/apple-touch-icon.png?v=socialite-2"><link rel="preload" href="/fonts/geist.woff2" as="font" type="font/woff2" crossorigin><link rel="stylesheet" href="/style.css"><script type="module" src="/login.js"></script></head>
+<body class="gate">
+<main class="gate-box">
+  <div class="gate-brand"><img src="/logo.svg" alt="" width="28" height="28"><span>Socialite</span><span class="gate-dot" aria-hidden="true"></span></div>
+  <form id="login-form" class="panel" novalidate>
+    <h1 id="login-title" class="gate-title">Sign in</h1>
+    <p id="login-intro" class="hint">Enter your dashboard password.</p>
+    <label id="setup-label" class="field" hidden>Setup code<input id="setup-code" name="setupCode" class="mono" autocomplete="off" spellcheck="false"><small>The one-time code from your setup message. Only needed once.</small></label>
+    <label class="field">Password<input id="password" name="password" type="password" autocomplete="current-password" required></label>
+    <label id="confirm-label" class="field" hidden>Confirm password<input id="confirm" type="password" autocomplete="new-password"></label>
+    <p id="login-error" class="status bad gate-error" role="alert" hidden></p>
+    <button class="btn btn-accent login-submit">Sign in</button>
   </form>
 </main>
 </body></html>

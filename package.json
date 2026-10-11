@@ -13,6 +13,7 @@
     "node": ">=24"
   },
   "devDependencies": {
-    "wrangler": "^4.148.0"
+    "wrangler": "^4.148.0",
+    "jsdom": "^30.1.2"
   }
 }
