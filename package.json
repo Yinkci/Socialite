@@ -1,0 +1,18 @@
+{
+  "name": "socialite-cloud",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Socialite on Cloudflare Workers: Facebook comment replies drafted by a Hugging Face ZeroGPU Space",
+  "scripts": {
+    "test": "node --test",
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
+  },
+  "engines": {
+    "node": ">=24"
+  },
+  "devDependencies": {
+    "wrangler": "^4.148.0"
+  }
+}
