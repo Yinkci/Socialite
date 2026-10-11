@@ -2,7 +2,7 @@ import { withoutEmDashes } from './reply-text.js';
 
 export const defaults = {
   personality: 'Warm, friendly, and concise. Match the commenter’s language. Use at most one emoji. Never invent facts, prices, promises, or personal experiences.',
-  knowledge: '', examples: '', hfSpace: '', mode: 'approval', learningEnabled: true, replyPolicy: '', replyPolicyPageId: '', skipEmojiOnly: false,
+  knowledge: '', examples: '', model: '', hfSpace: '', aiProvider: 'fallback', mode: 'approval', learningEnabled: true, replyPolicy: '', replyPolicyPageId: '', skipEmojiOnly: false,
   pageId: '', graphVersion: '', postIds: '', intervalSeconds: 30, commentDelaySeconds: 0, live: false,
 };
 
@@ -21,7 +21,7 @@ export class Store {
       CREATE TABLE IF NOT EXISTS activity (id INTEGER PRIMARY KEY, at INTEGER, message TEXT);
     `);
     // Post preview columns, added after the first release.
-    for(const col of ["post_url TEXT DEFAULT ''","post_image TEXT DEFAULT ''","post_loaded INTEGER DEFAULT 0","reaction_choice TEXT DEFAULT 'NONE'","reaction_selected INTEGER DEFAULT 0","reaction_status TEXT DEFAULT 'pending'","reaction_applied TEXT DEFAULT 'NONE'","reaction_error TEXT DEFAULT ''","manual_hold INTEGER DEFAULT 0","page_id TEXT DEFAULT ''","draft_history TEXT DEFAULT '[]'","publish_kind TEXT DEFAULT ''","published_at INTEGER DEFAULT 0","cleared_at INTEGER DEFAULT 0","like_after_publish INTEGER DEFAULT 0","reply_decision TEXT DEFAULT 'REVIEW'"]) {
+    for(const col of ["post_url TEXT DEFAULT ''","post_image TEXT DEFAULT ''","post_loaded INTEGER DEFAULT 0","reaction_choice TEXT DEFAULT 'NONE'","reaction_selected INTEGER DEFAULT 0","reaction_status TEXT DEFAULT 'pending'","reaction_applied TEXT DEFAULT 'NONE'","reaction_error TEXT DEFAULT ''","manual_hold INTEGER DEFAULT 0","page_id TEXT DEFAULT ''","draft_history TEXT DEFAULT '[]'","publish_kind TEXT DEFAULT ''","published_at INTEGER DEFAULT 0","pending_at INTEGER DEFAULT 0","attention_at INTEGER DEFAULT 0","cleared_at INTEGER DEFAULT 0","like_after_publish INTEGER DEFAULT 0","reply_decision TEXT DEFAULT 'REVIEW'"]) {
       try { this.db.exec(`ALTER TABLE comments ADD COLUMN ${col}`); } catch { /* already exists */ }
     }
     for(const c of this.db.prepare("SELECT id,draft FROM comments WHERE status IN ('queued','pending','error','rejected') AND instr(draft,?)>0").all('\u2014')) {
@@ -38,21 +38,34 @@ export class Store {
     this.saveSettings(this.settings()); // Remove the retired pause flag from saved preferences.
     this.db.prepare("UPDATE comments SET status='queued' WHERE status='generating'").run();
     this.db.prepare("UPDATE comments SET status='uncertain', error='App stopped while publishing. Check Facebook before retrying.' WHERE status='publishing'").run();
+    // Existing rows have no transition history. Seed only states that are still active.
+    this.db.prepare("UPDATE comments SET pending_at=updated_at WHERE pending_at=0 AND status='pending'").run();
+    this.db.prepare("UPDATE comments SET attention_at=updated_at WHERE attention_at=0 AND status NOT IN ('removed','skipped') AND (status IN ('error','uncertain') OR reaction_status IN ('error','uncertain'))").run();
   }
   settings() { const {paused,...saved}=JSON.parse(this.db.prepare('SELECT value FROM settings WHERE id=1').get().value);return { ...defaults, ...saved }; }
   saveSettings(s) { const {paused,...preferences}=s;this.db.prepare('UPDATE settings SET value=? WHERE id=1').run(JSON.stringify(preferences)); }
   list() { return this.db.prepare('SELECT * FROM comments WHERE cleared_at=0 ORDER BY created_at DESC LIMIT 300').all(); }
+  kpiTimes(since=Date.now()-86400e3) {
+    const times=(column,condition='')=>this.db.prepare(`SELECT ${column} AS at FROM comments WHERE source='facebook' AND ${column}>=? ${condition}`).all(since).map(r=>r.at);
+    const published=this.db.prepare("SELECT CASE WHEN published_at>0 THEN published_at ELSE updated_at END AS at, publish_kind FROM comments WHERE source='facebook' AND status='published' AND (published_at>=? OR (published_at=0 AND updated_at>=?))").all(since,since);
+    return {
+      new:times('created_at'),
+      pending:times('pending_at'),
+      published:published.map(r=>r.at),
+      automatic:published.filter(r=>r.publish_kind==='automatic').map(r=>r.at),
+    };
+  }
   tabCounts() {
     const counts={all:0,new:0,pending:0,published:0,approved:0,automatic:0,error:0,rejected:0,skipped:0};
     for(const r of this.db.prepare("SELECT status,publish_kind,reaction_status,COUNT(*) AS n FROM comments WHERE cleared_at=0 AND status<>'removed' GROUP BY status,publish_kind,reaction_status").all()) {
       if(!['published','rejected','skipped'].includes(r.status))counts.all+=r.n;
-      if(['queued','generating','pending','publishing'].includes(r.status))counts.new+=r.n;
+      if(['queued','generating','pending','publishing','error','uncertain'].includes(r.status))counts.new+=r.n;
       if(['pending','published','rejected','skipped'].includes(r.status))counts[r.status]+=r.n;
       if(r.status==='published') {
         if(['approved','edited'].includes(r.publish_kind))counts.approved+=r.n;
         if(r.publish_kind==='automatic')counts.automatic+=r.n;
       }
-      if(!['published','skipped'].includes(r.status)&&(['error','uncertain'].includes(r.status)||['error','uncertain'].includes(r.reaction_status)))counts.error+=r.n;
+      if(!['removed','skipped'].includes(r.status)&&(['error','uncertain'].includes(r.status)||['error','uncertain'].includes(r.reaction_status)))counts.error+=r.n;
     }
     return counts;
   }
@@ -79,13 +92,25 @@ export class Store {
   }
   update(id, fields) {
     const allowed = ['message','context','post_url','post_image','post_loaded','status','draft','review','reason','error','reply_id','attempts','next_at','reaction_choice','reaction_selected','reaction_status','reaction_applied','reaction_error','manual_hold','draft_history','publish_kind','published_at','like_after_publish','reply_decision'];
-    const keys = Object.keys(fields).filter(k => allowed.includes(k));
+    const updates=Object.fromEntries(Object.entries(fields).filter(([key])=>allowed.includes(key)));
+    const now=Date.now();
+    if('status' in updates||'reaction_status' in updates){
+      const previous=this.get(id);
+      if(previous){
+        const status=updates.status??previous.status, reaction=updates.reaction_status??previous.reaction_status;
+        if(status==='pending'&&previous.status!=='pending')updates.pending_at=now;
+        const needsAttention=(s,r)=>!['removed','skipped'].includes(s)&&(['error','uncertain'].includes(s)||['error','uncertain'].includes(r));
+        if(needsAttention(status,reaction)&&!needsAttention(previous.status,previous.reaction_status))updates.attention_at=now;
+      }
+    }
+    const keys=Object.keys(updates);
     if (!keys.length) return;
     this.db.prepare(`UPDATE comments SET ${keys.map(k => `${k}=?`).join(',')}, updated_at=? WHERE id=?`)
-      .run(...keys.map(k => fields[k]), Date.now(), id);
+      .run(...keys.map(k => updates[k]), now, id);
   }
   claim(id, from, to) {
-    return this.db.prepare('UPDATE comments SET status=?, updated_at=? WHERE id=? AND status=?').run(to, Date.now(), id, from).changes === 1;
+    const now=Date.now();
+    return this.db.prepare('UPDATE comments SET status=?, updated_at=?, pending_at=CASE WHEN ?=\'pending\' THEN ? ELSE pending_at END, attention_at=CASE WHEN ? IN (\'error\',\'uncertain\') THEN ? ELSE attention_at END WHERE id=? AND status=?').run(to,now,to,now,to,now,id,from).changes===1;
   }
   needsPost() { return this.db.prepare("SELECT * FROM comments WHERE source='facebook' AND cleared_at=0 AND post_loaded=0 AND post_id<>'' AND status NOT IN ('removed','rejected','skipped') ORDER BY created_at DESC LIMIT 1").get(); }
   queued() { return this.db.prepare("SELECT * FROM comments WHERE cleared_at=0 AND status='queued' AND next_at<=? ORDER BY created_at LIMIT 1").get(Date.now()); }

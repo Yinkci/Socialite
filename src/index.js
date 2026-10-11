@@ -6,6 +6,8 @@ import { Buffer } from 'node:buffer';
 import { Store } from './store.js';
 import { DurableDatabase, Vault } from './db.js';
 import { HuggingFace, spaceUrl } from './hf.js';
+import { ChatGPT } from './chatgpt.js';
+import { AIRouter, AI_PROVIDERS } from './ai.js';
 import { Facebook, validSignature } from './facebook.js';
 import { Workflow } from './workflow.js';
 import { LiveSwitch } from './live.js';
@@ -38,8 +40,9 @@ export class SocialiteApp extends DurableObject {
     this.vault=new Vault(ctx.storage.kv);
     if(!this.vault.get('verifyToken')) this.vault.set('verifyToken',randomToken(24));
     this.huggingface=new HuggingFace(this.store,this.vault);
-    // The workflow calls its AI "chatgpt"; here the only AI is the Hugging Face Space.
-    const ai={status:()=>({enabled:this.huggingface.configured()}),generate:(settings,comment)=>this.huggingface.generate(settings,comment)};
+    this.chatgpt=new ChatGPT(this.vault);
+    const ai=new AIRouter(this.store,this.chatgpt,this.huggingface);
+    this.ai=ai;
     this.facebook=new Facebook(this.store,this.vault);
     this.workflow=new Workflow(this.store,ai,this.facebook);
     this.live=new LiveSwitch(this.store,this.facebook,{ownUrl:async()=>this.webhookUrl(),isOwn:url=>url===this.webhookUrl()});
@@ -71,6 +74,7 @@ export class SocialiteApp extends DurableObject {
       const input=()=>{try{return JSON.parse(body.toString()||'{}');}catch{return {};}};
       if(path==='/internal/wake') {await this.ensureAlarm();return json(200,{ok:true});}
       if(path==='/internal/import') return await this.importData(request,input());
+      if(path==='/internal/import-chatgpt') return await this.importChatGPT(request,input());
       if(path==='/webhooks/facebook') return await this.webhook(request,url,body);
       await this.ensureAlarm();
       if(path==='/api/auth-status'&&request.method==='GET') return json(200,{setup:!this.vault.get('passwordHash'),signedIn:!!this.session(request)});
@@ -138,9 +142,10 @@ export class SocialiteApp extends DurableObject {
   async state(session,url) {
     const {store,vault,facebook,workflow}=this, s=store.settings(), page=facebook.configured()&&s.facebookPage?.id===s.pageId?s.facebookPage:null;
     return {app:'Socialite',csrf:session.csrf,settings:s,
-      replyAI:{provider:'huggingface',enabled:this.huggingface.configured()},huggingface:{hasToken:!!vault.get('hfToken')},
+      replyAI:this.ai.status(),
+      chatgpt:this.chatgpt.status(),huggingface:{hasToken:!!vault.get('hfToken')},
       facebook:{configured:facebook.configured(),pageName:page?.name||'',followersCount:page?.followersCount??null,followersUpdatedAt:page?.followersUpdatedAt??null,hasAppSecret:!!vault.get('appSecret'),hasToken:!!vault.get('facebookToken'),verifyToken:vault.get('verifyToken')},
-      memory:workflow.memory.status(),comments:store.list(),tabCounts:store.tabCounts(),clearableCounts:store.clearableCounts(),activity:store.activity(),
+      memory:workflow.memory.status(),comments:store.list(),kpiTimes:store.kpiTimes(),tabCounts:store.tabCounts(),clearableCounts:store.clearableCounts(),activity:store.activity(),
       webhookUrl:this.webhookUrl()||url.origin+'/webhooks/facebook',live:await this.live.state()};
   }
 
@@ -152,6 +157,8 @@ export class SocialiteApp extends DurableObject {
     if('skipEmojiOnly' in input){if(typeof input.skipEmojiOnly!=='boolean')throw new Error('Invalid emoji-only preference');next.skipEmojiOnly=input.skipEmojiOnly;}
     if('replyPolicy' in input||'skipEmojiOnly' in input)next.replyPolicyPageId=next.pageId;
     if('learningEnabled' in input){if(typeof input.learningEnabled!=='boolean')throw new Error('Invalid learning preference');next.learningEnabled=input.learningEnabled;}
+    if('aiProvider' in input){if(!AI_PROVIDERS.includes(input.aiProvider))throw new Error('Choose ChatGPT, Hugging Face, or ChatGPT + Hugging Face.');next.aiProvider=input.aiProvider;}
+    if('model' in input){if(typeof input.model!=='string'||input.model.length>200)throw new Error('Invalid ChatGPT model');next.model=input.model;}
     if('hfSpace' in input){
       if(typeof input.hfSpace!=='string'||input.hfSpace.length>300)throw new Error('Invalid Hugging Face Space');
       const space=input.hfSpace.trim();if(space)spaceUrl(space);next.hfSpace=space;
@@ -172,6 +179,8 @@ export class SocialiteApp extends DurableObject {
       store.saveSettings(this.validateSettings(input));return {ok:true};
     }
     if(path==='/api/huggingface/check') return await huggingface.check();
+    if(path==='/api/chatgpt/check') return {models:await this.chatgpt.models()};
+    if(path==='/api/chatgpt/disconnect') {this.chatgpt.disconnect();store.log('Copied ChatGPT session removed from the online app.');return {ok:true};}
     if(path==='/api/password') {
       if(!await verifyPassword(String(input.current||''),vault.get('passwordHash')))throw new Error('Your current password is not correct.');
       if(typeof input.password!=='string'||input.password.length<10)throw new Error('Choose a new password with at least 10 characters.');
@@ -230,5 +239,22 @@ export class SocialiteApp extends DurableObject {
     this.workflow.memory.cache=null;
     this.store.log('Imported settings, history and reply memory from the local app.');
     return json(200,{ok:true,counts});
+  }
+
+  // A separate one-time transfer so the original data import cannot accidentally copy OAuth tokens.
+  async importChatGPT(request,data) {
+    const expected=this.env.IMPORT_TOKEN;
+    if(!expected||request.method!=='POST'||request.headers.get('authorization')!=='Bearer '+expected) return json(404,{error:'Not found'});
+    this.chatgpt.importSession(data.session);
+    this.store.log('Copied ChatGPT session imported from the local app.');
+    try {
+      const models=await this.chatgpt.models();
+      if(!models.length)throw new Error('No ChatGPT models are available for this plan.');
+      await this.chatgpt.generate(this.store.settings(),{context:'A short welcome post for our community.',message:'Thank you for sharing this!'});
+      return json(200,{ok:true,chatgpt:this.chatgpt.status(),modelCount:models.length,draftCheck:'ok'});
+    } catch(error) {
+      this.store.log('Copied ChatGPT session could not be checked: '+error.message);
+      return json(200,{ok:true,chatgpt:this.chatgpt.status(),checkError:error.message});
+    }
   }
 }

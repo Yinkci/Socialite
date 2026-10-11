@@ -1,4 +1,4 @@
-let state, filter='all', loading=false, search='', selected=null;
+let state, filter='new', loading=false, search='', selected=null;
 const draftEdits=new Map();
 const ideaEdits=new Map(),ideaModes=new Map();
 let memoryOffset=0,memorySignature='',memoryRequest=0;
@@ -9,14 +9,12 @@ const iconPaths={msg:'M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z',flask:'M6 2h4M6.5 2v4L3 
 const icon=name=>`<svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="${iconPaths[name]||iconPaths.dot}"/></svg>`;
 const safeUrl=(value,fallback)=>{try{const url=new URL(value);return url.protocol==='https:'?url.href:fallback;}catch{return fallback;}};
 const labels={queued:'Queued',generating:'Drafting…',pending:'Awaiting approval',published:'Published',error:'Needs attention',uncertain:'Check Facebook',removed:'Removed',rejected:'Reply dismissed',skipped:'No reply needed',publishing:'Publishing…',simulated:'Test approved'};
-const isNewComment=c=>['queued','generating','pending','publishing'].includes(c.status);
 const isPublishedFilter=()=>['published','approved','automatic'].includes(filter);
 const publicationLabel=c=>c.publish_kind==='automatic'?'Automatically published':['approved','edited'].includes(c.publish_kind)?'Approved by you':'Publication method unavailable';
-const needsAttention=c=>!['published','removed','skipped'].includes(c.status)&&(['error','uncertain'].includes(c.status)||['error','uncertain'].includes(c.reaction_status));
-const tabLabels={all:'All comments',new:'New comments',pending:'Awaiting approval',published:'All published',approved:'Approved by you',automatic:'Automatically published',error:'Needs attention',rejected:'Dismissed replies',skipped:'No reply needed'};
-const segLabels={new:'New',pending:'Awaiting',published:'Published',error:'Attention'};
-const moreLabels={all:'All',approved:'By you',automatic:'Auto',rejected:'Dismissed',skipped:'No reply'};
-const matchesTab=(c,key)=>c.status!=='removed'&&!c.cleared_at&&(key==='all'?!['published','rejected','skipped'].includes(c.status):key==='new'?isNewComment(c):key==='error'?needsAttention(c):key==='approved'?c.status==='published'&&['approved','edited'].includes(c.publish_kind):key==='automatic'?c.status==='published'&&c.publish_kind==='automatic':c.status===key);
+const needsAttention=c=>!['removed','skipped'].includes(c.status)&&(['error','uncertain'].includes(c.status)||['error','uncertain'].includes(c.reaction_status));
+const isNewComment=c=>['queued','generating','pending','publishing','error','uncertain'].includes(c.status);
+const tabLabels={all:'All comments',new:'New comments',pending:'Awaiting approval',published:'All published',approved:'Approved by you',automatic:'Automatically published',rejected:'Dismissed replies',skipped:'No reply needed'};
+const matchesTab=(c,key)=>c.status!=='removed'&&!c.cleared_at&&(key==='all'?!['published','rejected','skipped'].includes(c.status):key==='new'?isNewComment(c):key==='approved'?c.status==='published'&&['approved','edited'].includes(c.publish_kind):key==='automatic'?c.status==='published'&&c.publish_kind==='automatic':c.status===key);
 const date=(at,seconds=false)=>new Date(at).toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',...(seconds?{second:'2-digit'}:{})});
 const ago=at=>{const s=Math.max(0,Math.round((Date.now()-at)/1000));return s<60?s+'s ago':s<3600?Math.round(s/60)+'m ago':s<86400?Math.round(s/3600)+'h ago':Math.round(s/86400)+'d ago';};
 // Status tone shared by list dots and the status pill: waiting on you, posted, needs attention, or quiet.
@@ -51,11 +49,9 @@ function visibleRows(){
 function renderFilters(){
   document.querySelectorAll('[data-filter]').forEach(button=>{
     const key=button.dataset.filter,count=state.tabCounts?.[key]??state.comments.filter(c=>matchesTab(c,key)).length;
-    button.innerHTML=`${esc(segLabels[key]&&button.closest('.seg')?segLabels[key]:tabLabels[key])} <span class="n"><span class="p">(</span>${count.toLocaleString()}<span class="p">)</span></span>`;
+    button.setAttribute('aria-pressed',String(key===filter));
+    if(!button.classList.contains('kpi'))button.innerHTML=`${esc(tabLabels[key])} <span class="n"><span class="p">(</span>${count.toLocaleString()}<span class="p">)</span></span>`;
   });
-  const inMenu=!!$(`#filter-menu [data-filter="${filter}"]`);
-  $('#filter-more-label').textContent=inMenu?moreLabels[filter]:'More';$('#filter-more').title=inMenu?'Showing: '+tabLabels[filter]:'More filters';
-  $('#filter-more').dataset.active=String(inMenu);
 }
 function renderComments() {
   renderFilters();
@@ -78,7 +74,7 @@ function renderComments() {
   const fresh=rows.filter(c=>!renderedRows.has(c.id)).map(c=>c.id);
   const rowsHtml=rows.map(c=>{
     const preview=c.draft&&['published','simulated'].includes(c.status)?'You: '+c.draft:c.message;
-    return `<button type="button" class="row" role="option" data-row="${esc(c.id)}" aria-selected="${c.id===selected}"><span class="row-dot" data-tone="${tone(c.status)}" aria-hidden="true"></span><span class="row-who">${esc(c.author||'Facebook user')}</span><time class="row-time" datetime="${new Date(c.created_at).toISOString()}">${ago(c.created_at)}</time><span class="row-text">${esc(preview)}</span><span class="row-state">${c.source==='test'?'Test, ':''}${esc(labels[c.status]||c.status)}</span></button>`;
+    return `<button type="button" class="row" role="option" data-row="${esc(c.id)}" aria-selected="${c.id===selected}"><span class="row-dot" data-tone="${needsAttention(c)?'warn':tone(c.status)}" aria-hidden="true"></span><span class="row-who">${esc(c.author||'Facebook user')}</span><time class="row-time" datetime="${new Date(c.created_at).toISOString()}">${ago(c.created_at)}</time><span class="row-text">${esc(preview)}</span><span class="row-state">${c.source==='test'?'Test, ':''}${c.status==='published'&&needsAttention(c)?'Like needs checking':esc(labels[c.status]||c.status)}</span></button>`;
   }).join('');
   if(rowsHtml!==lastRowsHtml){$('#comment-rows').innerHTML=rowsHtml;lastRowsHtml=rowsHtml;}
   // Newly arrived rows slide in once, staggered; existing rows never re-animate.
@@ -88,7 +84,7 @@ function renderComments() {
     const fbUrl='https://www.facebook.com/'+encodeURIComponent(c.post_id||'');
     const postUrl=safeUrl(c.post_url,fbUrl);
     const imageUrl=safeUrl(c.post_image,'');
-    const statusIcon=['published','simulated'].includes(c.status)?'check':['error','uncertain'].includes(c.status)?'alert':['pending','queued','generating'].includes(c.status)?'wait':'msg';
+    const statusIcon=needsAttention(c)?'alert':['published','simulated'].includes(c.status)?'check':['pending','queued','generating'].includes(c.status)?'wait':'msg';
     if(draftEdits.has(c.id)&&(draftEdits.get(c.id).base!==c.draft||!['pending','generating'].includes(c.status)))draftEdits.delete(c.id);
     const grammarOnly=ideaModes.get(c.id)==='grammar';
     const editable=c.status==='pending';
@@ -103,7 +99,7 @@ function renderComments() {
     const controls=`${editable?`<button type="button" class="btn btn-accent" data-action="approve">${icon('send')}${c.source==='test'?'Approve test reply':'Approve & publish reply'}<kbd>A</kbd></button>`:''}${['queued','pending','error'].includes(c.status)?`<button type="button" class="btn" data-action="draft">${icon('again')}${c.draft?'Regenerate reply':'Generate reply'}<kbd>R</kbd></button><button type="button" class="btn btn-ghost btn-danger" data-action="reject">Dismiss reply</button>`:''}${['rejected','skipped'].includes(c.status)?`<button type="button" class="btn" data-action="draft">${icon('again')}Generate new reply<kbd>R</kbd></button>`:''}${c.status==='uncertain'?'<button type="button" class="btn" data-action="resolve-published">I checked: reply was posted</button><button type="button" class="btn" data-action="resolve-pending">I checked: no reply was posted</button>':''}`;
     return `<article class="convo" data-comment="${esc(c.id)}" aria-label="Conversation with ${esc(c.author||'Facebook user')}" ${c.id===selected?'':'hidden'}>
       <div class="convo-thread">
-        <header class="convo-head"><button type="button" class="btn btn-ghost back" data-back>${icon('back')}Back</button><span class="convo-from">${icon(c.source==='test'?'flask':'msg')}${c.source==='test'?'Test conversation':'Facebook conversation'}</span><time datetime="${new Date(c.created_at).toISOString()}">Received: ${date(c.created_at,true)}</time><span class="state${landed?' landed':''}" data-tone="${tone(c.status)}">${icon(statusIcon)}${c.status==='published'?(c.publish_kind==='automatic'?'Automatically published':'Published'):labels[c.status]||esc(c.status)}</span></header>
+        <header class="convo-head"><button type="button" class="btn btn-ghost back" data-back>${icon('back')}Back</button><span class="convo-from">${icon(c.source==='test'?'flask':'msg')}${c.source==='test'?'Test conversation':'Facebook conversation'}</span><time datetime="${new Date(c.created_at).toISOString()}">Received: ${date(c.created_at,true)}</time><span class="state${landed?' landed':''}" data-tone="${needsAttention(c)?'warn':tone(c.status)}">${icon(statusIcon)}${c.status==='published'&&needsAttention(c)?'Like needs checking':c.status==='published'?(c.publish_kind==='automatic'?'Automatically published':'Published'):labels[c.status]||esc(c.status)}</span></header>
         <section class="post${imageUrl&&c.source==='facebook'?'':' post-noimg'}" aria-label="Post context">
           ${imageUrl&&c.source==='facebook'?`<a href="${esc(postUrl)}" target="_blank" rel="noopener noreferrer"><img class="post-img" src="${esc(imageUrl)}" alt="Facebook post preview" loading="lazy" width="96" height="96"></a>`:''}
           <div class="post-body"><h3 class="sec-h">${c.source==='test'?'Test post context':'Your Facebook post / Reel'}</h3><div class="post-text">${esc(postCaption)}</div>${c.source==='facebook'?`<a class="ext" href="${esc(postUrl)}" target="_blank" rel="noopener noreferrer">Open post on Facebook ${icon('ext')}</a>`:'<span class="test-tag">Local test. Nothing posts to Facebook.</span>'}</div>
@@ -118,12 +114,12 @@ function renderComments() {
         ${c.status==='skipped'?`<p class="note"><strong>No reply needed:</strong> ${esc(c.reason||'This comment has no clear message to respond to.')} No reply will be published. You can reassess it manually; any restored draft will wait for your approval.</p>`:''}
         ${c.status==='pending'&&c.reply_decision==='REVIEW'?'<p class="note"><strong>Meaning needs review:</strong> This reply needs your approval, including in Automatic mode.</p>':''}
         ${c.status==='rejected'?'<p class="guide">This reply was dismissed. You can generate a new reply whenever you want; it will wait for your approval.</p>':''}
-        ${c.draft?`<div class="draft">${c.status==='generating'?'<p class="guide">AI is working on your reply. The previous draft is shown until it is ready.</p>':''}${editable?'<p class="guide">Edit the reply, then approve it to publish.</p>':''}<textarea aria-label="Reply to ${esc(c.author)}" data-draft="${esc(c.id)}" data-original="${esc(c.draft)}" rows="6" maxlength="1000" ${editable?'':'readonly'}>${esc(editable?(draftEdits.get(c.id)?.text??c.draft):c.draft)}</textarea>${c.reason?`<p class="note"><strong>Review note:</strong> ${esc(c.reason)}</p>`:''}</div>`:`<p class="empty-reply">${c.status==='generating'?'AI is writing a reply. It will appear here shortly.':c.status==='queued'?(state.replyAI?.enabled?'Waiting for automatic drafting. Replies are generated one at a time.':'Connect your Hugging Face Space to generate this reply automatically.'):'No reply has been generated for this comment.'}</p>`}
+        ${c.draft?`<div class="draft">${c.status==='generating'?'<p class="guide">AI is working on your reply. The previous draft is shown until it is ready.</p>':''}${editable?'<p class="guide">Edit the reply, then approve it to publish.</p>':''}<textarea aria-label="Reply to ${esc(c.author)}" data-draft="${esc(c.id)}" data-original="${esc(c.draft)}" rows="6" maxlength="1000" ${editable?'':'readonly'}>${esc(editable?(draftEdits.get(c.id)?.text??c.draft):c.draft)}</textarea>${c.reason?`<p class="note"><strong>Review note:</strong> ${esc(c.reason)}</p>`:''}</div>`:`<p class="empty-reply">${c.status==='generating'?'AI is writing a reply. It will appear here shortly.':c.status==='queued'?(state.replyAI?.enabled?'Waiting for automatic drafting. Replies are generated one at a time.':'Connect your selected Reply AI provider to generate this reply automatically.'):'No reply has been generated for this comment.'}</p>`}
         ${c.error?`<p class="fault"><strong>Needs attention:</strong> ${esc(c.error)}</p>`:''}
         ${controls?`<div class="actions">${controls}</div>`:''}
         ${['queued','pending','error','rejected','skipped','generating'].includes(c.status)?`<div class="coach"><label class="coach-title" for="idea-${esc(c.id)}">Work on this reply with AI</label><p>${grammarOnly?'Paste your reply below. AI will only correct spelling, grammar, and punctuation, preserving your meaning and tone.':'Share your idea or tell the AI what to change. It will use this comment, the post, and your current draft.'}</p><label class="coach-pick">What should AI do?<select data-idea-mode="${esc(c.id)}" aria-label="AI editing mode for ${esc(c.author)}" ${c.status==='generating'?'disabled':''}><option value="improve" ${!grammarOnly?'selected':''}>Improve my idea</option><option value="grammar" ${grammarOnly?'selected':''}>Correct grammar only</option></select></label><textarea id="idea-${esc(c.id)}" data-idea="${esc(c.id)}" aria-label="Your idea for replying to ${esc(c.author)}" rows="2" maxlength="${grammarOnly?1000:2000}" placeholder="${grammarOnly?'Type the exact reply you want corrected.':'For example: Say I appreciate their support, but make it sound more personal.'}" ${c.status==='generating'?'disabled':''}>${esc(ideaEdits.get(c.id)||'')}</textarea><div class="coach-f"><span>Creates a draft for your approval.</span><button type="button" class="btn" data-action="refine" ${c.status==='generating'?'disabled':''}>${icon('spark')}${grammarOnly?'Correct grammar':'Write reply from my idea'}</button></div></div>`:''}
       </section></article>`;
-  }).join(''):`<div class="listening"><div class="radar${state.live?.on?'':' idle'}" aria-hidden="true"></div><h2>${search?'No matching conversations.':filter==='all'?(state.live?.on?'Agent listening…':'Agent is off.'):'All caught up.'}</h2><p>${search?'Try another name, comment, or phrase.':filter==='all'?(state.live?.on?'New comments appear here the moment Facebook sends them. Try a test comment to hear your AI voice.':'Turn Live On to receive new comments, or try a test comment.'):'New conversations matching this filter will appear here.'}</p><button type="button" id="empty-test" class="btn">New test comment</button></div>`;
+  }).join(''):`<div class="listening"><div class="radar${state.live?.on?'':' idle'}" aria-hidden="true"></div><h2>${search?'No matching conversations.':filter==='all'?(state.live?.on?'Agent listening…':'Agent is off.'):'All caught up.'}</h2><p>${search?'Try another name, comment, or phrase.':filter==='all'?(state.live?.on?'New comments appear here the moment Facebook sends them. Try a test comment to hear your AI voice.':'Turn Live On to receive new comments, or try a test comment.'):'New conversations matching this filter will appear here.'}</p></div>`;
   if(detailHtml!==lastDetailHtml){
     const open=currentDetail(), scrolls=open?{id:open.dataset.comment,thread:open.querySelector('.convo-thread')?.scrollTop||0,reply:open.querySelector('.convo-reply')?.scrollTop||0}:null;
     target.innerHTML=detailHtml;lastDetailHtml=detailHtml;
@@ -149,7 +145,7 @@ function moveSelection(step){
   const i=Math.max(0,ids.indexOf(selected));selectComment(ids[Math.min(ids.length-1,Math.max(0,i+step))]);
 }
 
-// ---------- KPIs: counts, 24h deltas, 12h sparklines ----------
+// ---------- KPIs: current status counts and 24h event totals ----------
 function sparkline(svg,times){
   const now=Date.now(),hour=3600e3,buckets=Array(12).fill(0);
   for(const t of times){const h=Math.floor((now-t)/hour);if(h>=0&&h<12)buckets[11-h]++;}
@@ -157,12 +153,12 @@ function sparkline(svg,times){
   svg.innerHTML=buckets.map((n,i)=>`<rect x="${i*8}" y="${24-Math.max(2,Math.round(n/max*22))}" width="6" height="${Math.max(2,Math.round(n/max*22))}" rx="1"${i===11?' class="now"':''}/>`).join('');
 }
 function renderKpis(){
-  const day=Date.now()-86400e3, cs=state.comments;
-  const sets={new:cs.filter(isNewComment).map(c=>c.created_at),pending:cs.filter(c=>c.status==='pending').map(c=>c.created_at),published:cs.filter(c=>c.status==='published').map(c=>c.published_at||c.updated_at||c.created_at),errors:cs.filter(needsAttention).map(c=>c.updated_at||c.created_at)};
-  for(const [key,times] of Object.entries(sets)){
-    sparkline($('#spark-'+key),times);
+  const day=Date.now()-86400e3, sets=state.kpiTimes||{new:[],pending:[],published:[],automatic:[]};
+  for(const key of ['new','pending','published','automatic']){
+    const times=sets[key]||[],id=key==='automatic'?'auto':key;
+    sparkline($('#spark-'+id),times);
     const recent=times.filter(t=>t>=day).length;
-    $('#delta-'+key).textContent=(recent?'+'+recent:'0')+' in 24h';
+    $('#delta-'+id).textContent=(recent?'+'+recent:'0')+' in 24h';
   }
 }
 
@@ -229,11 +225,22 @@ function renderPagebar(){
 function render(){
   $('#header-date').textContent=new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
   const replyAI=state.replyAI||{provider:'huggingface',enabled:false};
-  $('#rail-ai-status').textContent=replyAI.enabled?'ZeroGPU Space':'Not connected';
+  const chatgpt=!!state.chatgpt?.enabled;
+  const hf=!!(state.settings.hfSpace&&state.huggingface?.hasToken);
+  const providerNames={chatgpt:'ChatGPT',huggingface:'Hugging Face',fallback:'ChatGPT + Hugging Face'};
+  $('#rail-ai-name').textContent=providerNames[replyAI.provider]||'Reply AI';
+  $('#rail-ai-status').textContent=!replyAI.enabled?'Not connected':replyAI.provider==='fallback'?(chatgpt?'ChatGPT first'+(hf?' · HF backup':''):'Hugging Face available'):replyAI.provider==='chatgpt'?'ChatGPT connected':'ZeroGPU Space';
   $('#rail-ai-dot').dataset.on=String(!!replyAI.enabled);
-  $('#provider-status').textContent=replyAI.enabled?'Connected':'Not ready';
-  $('#local-saved').textContent=replyAI.enabled?'Connected to Space '+state.settings.hfSpace:'Add your Space and access token, then save.';
-  $('#local-saved').className='status '+(replyAI.enabled?'ok':'bad');
+  $('#provider-status').textContent=providerNames[replyAI.provider]||'Reply AI';
+  $('#ai-status').textContent=chatgpt?'Plan connected':'Not connected';
+  $('#ai-description').textContent=chatgpt?'Connected as '+(state.chatgpt.email||'your ChatGPT account')+'. Reply generation uses your ChatGPT plan.':'No copied ChatGPT session is connected. Transfer one from local Socialite to use ChatGPT online.';
+  $('#load-models').disabled=!chatgpt;
+  $('#save-model').disabled=!chatgpt||!$('#model-select').value;
+  $('#disconnect-chatgpt').disabled=!chatgpt;
+  $('#model-saved').textContent='Saved model: '+(state.settings.model||'automatic');
+  const providerReady=replyAI.provider==='chatgpt'?chatgpt:replyAI.provider==='huggingface'?hf:chatgpt||hf;
+  $('#local-saved').textContent=providerReady?replyAI.provider==='fallback'?(chatgpt&&hf?'ChatGPT and Hugging Face are ready':chatgpt?'ChatGPT is ready; add Hugging Face for backup.':'Hugging Face is ready; add ChatGPT for first choice.'):replyAI.provider==='chatgpt'?'ChatGPT plan connected as '+(state.chatgpt.email||'your account'):'Connected to Space '+state.settings.hfSpace:replyAI.provider==='chatgpt'?'Connect a ChatGPT session from local Socialite.':replyAI.provider==='huggingface'?'Add your Space and access token.':'Connect ChatGPT or Hugging Face to write replies.';
+  $('#local-saved').className='status '+(providerReady?'ok':'bad');
   const pageLabel=state.facebook.configured?(state.facebook.pageName||'Page '+state.settings.pageId):'Not configured';
   $('#rail-fb-status').textContent=pageLabel;
   $('#rail-fb-status').title=state.facebook.configured?'Facebook Page ID: '+state.settings.pageId:'';
@@ -246,14 +253,14 @@ function render(){
   $('#rail-fb-updated').textContent=updated?'Updated '+new Date(updated).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}):'';
   $('#rail-fb-updated').title=updated?'Last fetched: '+new Date(updated).toLocaleString()+'. Refreshes every 5 minutes. Verify Page in Connections to refresh now.':'';
   renderPagebar();
-  const newCount=state.comments.filter(isNewComment).length;
+  const newCount=state.tabCounts?.new??state.comments.filter(isNewComment).length;
   $('#stat-new').textContent=newCount.toLocaleString();
-  const openCount=state.comments.filter(c=>isNewComment(c)||needsAttention(c)).length;
+  const openCount=state.comments.filter(isNewComment).length;
   $('#nav-count').textContent=openCount.toLocaleString();
   $('#nav-count').title=openCount+' open comments, including those waiting for an AI draft';
-  $('#stat-pending').textContent=state.comments.filter(c=>c.status==='pending').length;
-  $('#stat-published').textContent=state.comments.filter(c=>c.status==='published').length;
-  $('#stat-errors').textContent=state.comments.filter(needsAttention).length;
+  $('#stat-pending').textContent=(state.tabCounts?.pending??state.comments.filter(c=>c.status==='pending').length).toLocaleString();
+  $('#stat-published').textContent=(state.tabCounts?.published??state.comments.filter(c=>c.status==='published').length).toLocaleString();
+  $('#stat-auto').textContent=(state.tabCounts?.automatic??state.comments.filter(c=>c.status==='published'&&c.publish_kind==='automatic').length).toLocaleString();
   $('#mode-label').textContent={approval:'Approval required',hybrid:'Hybrid publishing',automatic:'Automatic publishing'}[state.settings.mode];
   $('#connection-banner').hidden=replyAI.enabled&&state.facebook.configured;
   $('#fb-status').textContent=state.facebook.configured?(pageLabel+(state.facebook.hasAppSecret?'':' - App secret needed')):'Not configured';
@@ -300,7 +307,7 @@ async function refresh(initial=false){if(loading)return;loading=true;try{state=a
 function toTop(){window.scrollTo?.(0,0);window.requestAnimationFrame?.(()=>window.scrollTo?.(0,0));setTimeout(()=>window.scrollTo?.(0,0),300);}
 
 // ---------- Inbox interactions ----------
-function showTest(){$('#test-form').hidden=false;$('#test-form textarea[name="message"]').focus();}
+function showTest(){location.hash='#queue';nav();$('#test-form').hidden=false;$('#test-form textarea[name="message"]').focus();}
 function hideTest(){$('#test-form').hidden=true;$('#open-test').focus();}
 // Menu links are #anchors; the browser would jump past the Page header, so each screen opens at the top.
 if('scrollRestoration' in history)history.scrollRestoration='manual';
@@ -310,7 +317,6 @@ $('#open-test').onclick=showTest;$('#close-test').onclick=hideTest;
 $('#comment-rows').addEventListener('click',event=>{const row=event.target.closest('[data-row]');if(row)selectComment(row.dataset.row,{open:true,scroll:false});});
 $('#comments').addEventListener('click',event=>{
   const button=event.target.closest('button');if(!button)return;
-  if(button.id==='empty-test')return showTest();
   if(button.hasAttribute('data-back')){$('#workspace').dataset.pane='list';return;}
   const card=button.closest('[data-comment]');if(!card||!button.dataset.action)return;
   const id=card.dataset.comment,kind=button.dataset.action;
@@ -327,13 +333,12 @@ $('#comments').addEventListener('click',event=>{
 function setFilter(key){
   filter=key;
   document.querySelectorAll('[data-filter]').forEach(x=>x.setAttribute('aria-pressed',String(x.dataset.filter===key)));
-  closeMenu();renderComments();
+  renderComments();
 }
-document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>setFilter(b.dataset.filter));
-function closeMenu(){$('#filter-menu').hidden=true;$('#filter-more').setAttribute('aria-expanded','false');}
-$('#filter-more').onclick=()=>{const open=$('#filter-menu').hidden;$('#filter-menu').hidden=!open;$('#filter-more').setAttribute('aria-expanded',String(open));if(open)($('#filter-menu button[aria-pressed="true"]')||$('#filter-menu button')).focus();};
-document.addEventListener('click',event=>{if(!event.target.closest('.more'))closeMenu();});
-$('#show-new-comments').onclick=()=>{search='';$('#comment-search').value='';location.hash='#queue';nav();$('[data-filter="new"]').click();$('#workspace').scrollIntoView({behavior:'smooth',block:'start'});};
+document.querySelectorAll('[data-filter]').forEach(b=>b.onclick=()=>{
+  if(b.classList.contains('kpi')){search='';$('#comment-search').value='';location.hash='#queue';nav();$('#workspace').dataset.pane='list';}
+  setFilter(b.dataset.filter);
+});
 $('#clear-comment-history').onclick=()=>{
   const status=filter;if(!['skipped','rejected'].includes(status))return;
   action($('#clear-comment-history'),async()=>{const result=await api('comments/clear',{status});notice(`${result.cleared} ${status==='skipped'?'no-reply comments':'dismissed replies'} cleared from local history.`);});
@@ -380,7 +385,7 @@ function approveSelected(){
 }
 document.addEventListener('keydown',event=>{
   if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();openPalette();return;}
-  if(event.key==='Escape'){if(!$('#palette').hidden)return closePalette();if(!$('#filter-menu').hidden){closeMenu();$('#filter-more').focus();return;}if(!$('#test-form').hidden)return hideTest();disarm();return;}
+  if(event.key==='Escape'){if(!$('#palette').hidden)return closePalette();if(!$('#test-form').hidden)return hideTest();disarm();return;}
   if(!$('#palette').hidden||typing(event.target)||event.ctrlKey||event.metaKey||event.altKey)return;
   const inbox=!$('#queue').hidden, key=event.key.toLowerCase();
   if(key==='/'){event.preventDefault();location.hash='#queue';$('#comment-search').focus();return;}
@@ -400,7 +405,7 @@ const commands=()=>[
   ['Go to Connections','',()=>{location.hash='#connections';}],
   ['Go to Activity','',()=>{location.hash='#activity';}],
   [state?.live?.on?'Turn agent Live Off':'Turn agent Live On','',()=>setLive(!(state.live?.on))],
-  ['New test comment','',()=>{location.hash='#queue';showTest();}],
+  ['Playground','',()=>{location.hash='#queue';showTest();}],
   ['Search comments','/',()=>{location.hash='#queue';$('#comment-search').focus();}],
   ...Object.entries(tabLabels).map(([key,label])=>['Show: '+label,'',()=>{location.hash='#queue';setFilter(key);}]),
   ['Verify Facebook Page','',()=>{location.hash='#connections';$('#verify-fb').click();}],
@@ -431,13 +436,36 @@ $('#palette').addEventListener('click',event=>{if(event.target.id==='palette')cl
 
 await refresh(true).catch(error=>notice(error.message,true));
 function fillReplyAI(){
+  const selected=document.querySelector(`input[name="aiProvider"][value="${state.settings.aiProvider||'fallback'}"]`);
+  if(selected)selected.checked=true;
   $('#hf-space-input').value=state.settings.hfSpace||'';
+  if(state.settings.model){const option=document.createElement('option');option.value=state.settings.model;option.textContent=state.settings.model;$('#model-select').replaceChildren(option);}
+  $('#save-model').disabled=!state.chatgpt?.enabled||!$('#model-select').value;
+  showReplyAIFields();
 }
+function showReplyAIFields(){
+  const provider=document.querySelector('input[name="aiProvider"]:checked')?.value;
+  const usesHF=provider!=='chatgpt';
+  $('#hf-fields').hidden=!usesHF;
+  $('#check-hf').hidden=!usesHF;
+}
+document.querySelectorAll('input[name="aiProvider"]').forEach(radio=>radio.onchange=showReplyAIFields);
 $('#check-hf').onclick=()=>action($('#check-hf'),async()=>{
   await api('settings',Object.fromEntries(new FormData($('#ai-provider-form'))));$('#hf-token-input').value='';
   await api('huggingface/check');
 },'Your Hugging Face Space is connected and ready.');
-$('#ai-provider-form').onsubmit=event=>{event.preventDefault();action(event.submitter,async()=>{await api('settings',Object.fromEntries(new FormData(event.target)));$('#hf-token-input').value='';},'Reply AI saved. New drafts will use your Space.');};
+$('#load-models').onclick=()=>action($('#load-models'),async()=>{
+  const {models}=await api('chatgpt/check');
+  const select=$('#model-select'),current=select.value||state.settings.model;
+  select.replaceChildren();
+  for(const model of models||[]){const option=document.createElement('option');option.value=model.id;option.textContent=model.name;select.append(option);}
+  if([...select.options].some(option=>option.value===current))select.value=current;
+  $('#save-model').disabled=!select.value;
+},'ChatGPT models loaded.');
+$('#model-select').onchange=()=>{$('#save-model').disabled=!$('#model-select').value;};
+$('#save-model').onclick=()=>action($('#save-model'),()=>api('settings',{model:$('#model-select').value}),'ChatGPT reply model saved.');
+$('#disconnect-chatgpt').onclick=()=>action($('#disconnect-chatgpt'),()=>api('chatgpt/disconnect'),'Copied ChatGPT session removed from the online app.');
+$('#ai-provider-form').onsubmit=event=>{event.preventDefault();action(event.submitter,async()=>{await api('settings',Object.fromEntries(new FormData(event.target)));$('#hf-token-input').value='';},'Reply AI choice saved. New drafts will use the selected provider.');};
 $('#connect-webhook').onclick=()=>setLive(!(state.live?.on));
 $('#copy-webhook').onclick=()=>action($('#copy-webhook'),()=>navigator.clipboard.writeText($('#webhook-address').value),'Webhook address copied.');
 $('#password-form').onsubmit=event=>{event.preventDefault();action(event.submitter,async()=>{await api('password',Object.fromEntries(new FormData(event.target)));location.replace('/login');});};

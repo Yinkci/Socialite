@@ -6,9 +6,9 @@
 <title>Socialite</title>
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0a0a0b">
-<link rel="icon" href="/favicon.ico?v=socialite-2" sizes="16x16 32x32 48x48 64x64">
-<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=socialite-2" sizes="any">
-<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=socialite-2">
+<link rel="icon" href="/favicon.ico?v=socialite-3" sizes="16x16 32x32 48x48 64x64">
+<link rel="icon" type="image/svg+xml" href="/favicon.svg?v=socialite-3" sizes="any">
+<link rel="apple-touch-icon" href="/apple-touch-icon.png?v=socialite-3">
 <link rel="preload" href="/fonts/geist.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="preload" href="/fonts/geistmono.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="/style.css">
@@ -19,7 +19,7 @@
 <div class="shell">
 
 <aside class="side" aria-label="Socialite">
-  <a class="brand" href="#queue"><img src="/logo.svg" alt="" width="22" height="22"><span>Socialite</span></a>
+  <a class="brand" href="#queue"><img src="/logo.svg?v=socialite-3" alt="" width="22" height="22"><span>Socialite</span></a>
 
   <section class="agent" aria-label="Agent status">
     <button type="button" id="live-switch" class="agent-switch" role="switch" aria-checked="false" aria-describedby="agent-help">
@@ -35,6 +35,7 @@
     <a href="#personality" data-nav="personality"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M3 4h10M3 8h6M3 12h8"/></svg><span>Voice &amp; rules</span></a>
     <a href="#connections" data-nav="connections"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M6.5 9.5 9.5 6.5M7 4.5l1.3-1.3a2.5 2.5 0 0 1 3.5 3.5L10.5 8M9 11.5l-1.3 1.3a2.5 2.5 0 0 1-3.5-3.5L5.5 8"/></svg><span>Connections</span></a>
     <a href="#activity" data-nav="activity"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M1.5 8h3l2-5 3 10 2-5h3"/></svg><span>Activity</span></a>
+    <button id="open-test" type="button"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg><span>Playground</span></button>
   </nav>
 
   <section class="health" aria-label="Connected accounts">
@@ -69,7 +70,6 @@
   <section id="queue" class="view view-inbox" aria-labelledby="queue-title">
     <header class="top">
       <h1 id="queue-title" class="title">Inbox</h1>
-      <div class="top-tools"><button id="open-test" type="button" class="btn">New test comment</button></div>
     </header>
 
     <div id="live-banner" class="banner banner-off" hidden>
@@ -84,15 +84,15 @@
     </div>
 
     <div class="kpis" aria-label="Overview">
-      <button id="show-new-comments" class="kpi kpi-go" type="button" title="Comments waiting for a draft or your approval"><span class="kpi-label">New comments</span><strong id="stat-new" class="kpi-n mono" aria-live="polite" aria-atomic="true">0</strong><span id="delta-new" class="kpi-delta mono"></span><svg id="spark-new" class="spark" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
-      <div class="kpi"><span class="kpi-label">Awaiting approval</span><strong id="stat-pending" class="kpi-n mono">0</strong><span id="delta-pending" class="kpi-delta mono"></span><svg id="spark-pending" class="spark" viewBox="0 0 96 24" aria-hidden="true"></svg></div>
-      <div class="kpi"><span class="kpi-label">Published replies</span><strong id="stat-published" class="kpi-n mono">0</strong><span id="delta-published" class="kpi-delta mono"></span><svg id="spark-published" class="spark spark-ok" viewBox="0 0 96 24" aria-hidden="true"></svg></div>
-      <div class="kpi kpi-warn"><span class="kpi-label">Needs attention</span><strong id="stat-errors" class="kpi-n mono">0</strong><span id="delta-errors" class="kpi-delta mono"></span><svg id="spark-errors" class="spark spark-warn" viewBox="0 0 96 24" aria-hidden="true"></svg></div>
+      <button id="show-new-comments" data-filter="new" aria-pressed="true" class="kpi kpi-go kpi-new" type="button" title="Comments waiting for a draft, your approval, or an error check"><span class="kpi-label">New comments</span><strong id="stat-new" class="kpi-n mono" aria-live="polite" aria-atomic="true">0</strong><span id="delta-new" class="kpi-delta mono"></span><svg id="spark-new" class="spark" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
+      <button data-filter="pending" aria-pressed="false" type="button" class="kpi kpi-go"><span class="kpi-label">Awaiting approval</span><strong id="stat-pending" class="kpi-n mono">0</strong><span id="delta-pending" class="kpi-delta mono"></span><svg id="spark-pending" class="spark" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
+      <button data-filter="published" aria-pressed="false" type="button" class="kpi kpi-go"><span class="kpi-label">Published replies</span><strong id="stat-published" class="kpi-n mono">0</strong><span id="delta-published" class="kpi-delta mono"></span><svg id="spark-published" class="spark spark-ok" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
+      <button data-filter="automatic" aria-pressed="false" type="button" class="kpi kpi-go kpi-auto"><span class="kpi-label">Automatically published</span><strong id="stat-auto" class="kpi-n mono">0</strong><span id="delta-auto" class="kpi-delta mono"></span><svg id="spark-auto" class="spark spark-ok" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
       <div class="kpi kpi-mode"><span class="kpi-label">Publishing</span><strong id="mode-label">Approval required</strong><a href="#personality" class="kpi-link">Change</a></div>
     </div>
 
     <form id="test-form" class="drawer" hidden aria-labelledby="test-title">
-      <div class="drawer-head"><h2 id="test-title">Test comment</h2><button type="button" id="close-test" class="btn btn-ghost">Close <kbd class="mono">Esc</kbd></button></div>
+      <div class="drawer-head"><h2 id="test-title">Playground</h2><button type="button" id="close-test" class="btn btn-ghost">Close <kbd class="mono">Esc</kbd></button></div>
       <p class="hint">Stays in this app. Approving a test never posts to Facebook.</p>
       <label class="field">Post caption or context<textarea name="context" rows="2" placeholder="What is this post or Reel about?"></textarea></label>
       <label class="field">Comment<textarea name="message" required rows="3" placeholder="Write a comment you would like your AI to answer"></textarea></label>
@@ -102,21 +102,10 @@
     <div id="workspace" class="workspace" data-pane="list">
       <div class="list-col">
         <div class="list-tools">
-          <div class="seg" role="group" aria-label="Filter comments">
-            <button type="button" data-filter="new" aria-pressed="false">New</button>
-            <button type="button" data-filter="pending" aria-pressed="false">Awaiting</button>
-            <button type="button" data-filter="published" aria-pressed="false">Published</button>
-            <button type="button" data-filter="error" aria-pressed="false">Attention</button>
-          </div>
-          <div class="more">
-            <button type="button" id="filter-more" class="btn btn-ghost more-btn" aria-haspopup="true" aria-expanded="false" aria-controls="filter-menu"><span id="filter-more-label">All comments</span><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m4 6 4 4 4-4"/></svg></button>
-            <div id="filter-menu" class="menu" role="group" aria-label="More filters" hidden>
-              <button type="button" data-filter="all" aria-pressed="true">All comments</button>
-              <button type="button" data-filter="approved" aria-pressed="false">Approved by you</button>
-              <button type="button" data-filter="automatic" aria-pressed="false">Automatically published</button>
-              <button type="button" data-filter="rejected" aria-pressed="false">Dismissed replies</button>
-              <button type="button" data-filter="skipped" aria-pressed="false">No reply needed</button>
-            </div>
+          <div class="seg secondary-filters" role="group" aria-label="More comment filters">
+            <button type="button" data-filter="rejected" aria-pressed="false">Dismissed replies</button>
+            <button type="button" data-filter="skipped" aria-pressed="false">No reply needed</button>
+            <button type="button" data-filter="approved" aria-pressed="false">Approved by you</button>
           </div>
         </div>
         <label class="search"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m10.5 10.5 3.5 3.5M7 11.5a4.5 4.5 0 1 1 0-9 4.5 4.5 0 0 1 0 9z"/></svg><span class="sr-only">Search comments</span><input id="comment-search" type="search" placeholder="Search comments, people or replies" aria-label="Search comments"><kbd class="mono">/</kbd></label>
@@ -171,18 +160,50 @@
     <header class="top"><h1 id="conn-title" class="title">Connections</h1><p class="top-sub">Accounts that read comments and write replies.</p></header>
 
     <form id="ai-provider-form" class="panel">
-      <div class="panel-h"><h2>Reply AI: Hugging Face</h2><span id="provider-status" class="pill">Hugging Face</span></div>
-      <p class="hint">Drafts are written by your own Hugging Face Space on a free ZeroGPU, using your personality and reply rules.</p>
-      <div class="field-pair">
-        <label class="field">Space<input id="hf-space-input" name="hfSpace" class="mono" placeholder="your-name/socialite-replies" autocomplete="off" spellcheck="false"></label>
-        <label class="field">Access token<input id="hf-token-input" name="hfToken" type="password" autocomplete="off" placeholder="hf_… (blank keeps the saved token)"></label>
-      </div>
-      <p class="hint">GPU time counts against the token's account, about 5 minutes a day on a free account. A sleeping Space takes a few minutes to wake on the first reply.</p>
+      <div class="panel-h"><h2>Reply AI</h2><span id="provider-status" class="pill">Hugging Face</span></div>
+      <p class="hint">Which AI writes drafts. Every option uses the same personality, reply rules and approval steps.</p>
+      <fieldset class="options">
+        <legend class="sr-only">Reply AI</legend>
+        <label class="option"><input type="radio" name="aiProvider" value="chatgpt"><span class="option-box"><strong>ChatGPT</strong><span>Uses your ChatGPT plan. Best writing quality.</span><em class="mono">plan limits</em></span></label>
+        <label class="option"><input type="radio" name="aiProvider" value="huggingface"><span class="option-box"><strong>Hugging Face</strong><span>Your Space on a free ZeroGPU. Replies in seconds.</span><em class="mono">~5 GPU min/day</em></span></label>
+        <label class="option"><input type="radio" name="aiProvider" value="fallback"><span class="option-box"><strong>ChatGPT + Hugging Face</strong><span>ChatGPT first. Switches to your Space at the limit.</span><em class="mono">most reliable</em></span></label>
+      </fieldset>
+      <section id="hf-fields" class="sub" aria-label="Hugging Face settings">
+        <h3>Hugging Face Space</h3>
+        <div class="field-pair">
+          <label class="field">Space<input id="hf-space-input" name="hfSpace" class="mono" placeholder="your-name/socialite-replies" autocomplete="off" spellcheck="false"></label>
+          <label class="field">Access token<input id="hf-token-input" name="hfToken" type="password" autocomplete="off" placeholder="hf_… (blank keeps the saved token)"></label>
+        </div>
+        <p class="hint">GPU time counts against the token's account, about 5 minutes a day on a free account. A sleeping Space takes a few minutes to wake on the first reply.</p>
+      </section>
       <div class="panel-f panel-f-split">
         <p id="local-saved" class="status"></p>
         <div class="btns"><button id="check-hf" type="button" class="btn">Test connection</button><button type="submit" class="btn btn-accent">Save Reply AI</button></div>
       </div>
     </form>
+
+    <div class="cols">
+      <div class="panel">
+        <div class="panel-h"><h2>ChatGPT</h2><span id="ai-status" class="pill">Not connected</span></div>
+        <p id="ai-description" class="hint"></p>
+        <div class="btns"><button id="disconnect-chatgpt" type="button" class="btn">Remove copied session</button><a class="btn btn-ghost" href="https://chatgpt.com/settings/usage" target="_blank" rel="noopener noreferrer">Manage plan usage</a></div>
+        <p class="hint">The online app uses a session copied from local Socialite. This experimental connection can expire and may affect sign-in on the local app. It uses your existing ChatGPT plan allowance.</p>
+        <div class="inline-field"><label class="field">Reply model<select id="model-select" class="mono"><option value="">Load models to choose</option></select></label><button id="load-models" type="button" class="btn">Load models</button><button id="save-model" type="button" class="btn">Save model</button></div>
+        <p id="model-saved" class="hint mono"></p>
+      </div>
+      <form id="facebook-form" class="panel">
+        <div class="panel-h"><h2>Facebook Page</h2><span id="fb-status" class="pill">Not configured</span></div>
+        <p class="hint">Credentials from your own Meta app. Separate from ChatGPT sign-in.</p>
+        <div class="field-pair">
+          <label class="field">Page ID<input id="page-input" name="pageId" class="mono" placeholder="Numeric Page ID" inputmode="numeric" required></label>
+          <label class="field">Graph API version<input id="version-input" name="graphVersion" class="mono" placeholder="v24.0" required></label>
+        </div>
+        <label class="field">Page access token<input name="pageToken" type="password" autocomplete="off" placeholder="Paste a Page token; blank keeps the saved token"></label>
+        <label class="field">Meta app secret<input name="appSecret" type="password" autocomplete="off" placeholder="Blank keeps the saved secret"></label>
+        <p class="hint">Stored encrypted on Cloudflare and never returned to the dashboard.</p>
+        <div class="btns"><button type="submit" class="btn btn-accent">Save Facebook connection</button><button id="verify-fb" type="button" class="btn">Verify Page</button><button id="subscribe-fb" type="button" class="btn">Subscribe Page to comments</button></div>
+      </form>
+    </div>
 
     <div class="panel">
       <div class="panel-h"><h2>Receive new comments</h2><span id="webhook-status" class="pill">Live Off</span></div>
@@ -194,28 +215,13 @@
       <div class="panel-f panel-f-split"><p id="webhook-line" class="status"></p><div class="btns"><button id="connect-webhook" type="button" class="btn btn-accent">Turn Live On</button></div></div>
     </div>
 
-    <div class="cols">
-      <form id="facebook-form" class="panel">
-        <div class="panel-h"><h2>Facebook Page</h2><span id="fb-status" class="pill">Not configured</span></div>
-        <p class="hint">Credentials from your own Meta app.</p>
-        <div class="field-pair">
-          <label class="field">Page ID<input id="page-input" name="pageId" class="mono" placeholder="Numeric Page ID" inputmode="numeric" required></label>
-          <label class="field">Graph API version<input id="version-input" name="graphVersion" class="mono" placeholder="v24.0" required></label>
-        </div>
-        <label class="field">Page access token<input name="pageToken" type="password" autocomplete="off" placeholder="Paste a Page token; blank keeps the saved token"></label>
-        <label class="field">Meta app secret<input name="appSecret" type="password" autocomplete="off" placeholder="Blank keeps the saved secret"></label>
-        <p class="hint">Stored encrypted on Cloudflare and never returned to the dashboard.</p>
-        <div class="btns"><button type="submit" class="btn btn-accent">Save Facebook connection</button><button id="verify-fb" type="button" class="btn">Verify Page</button><button id="subscribe-fb" type="button" class="btn">Subscribe Page to comments</button></div>
-      </form>
-
-      <form id="password-form" class="panel">
+    <form id="password-form" class="panel">
         <div class="panel-h"><h2>Account</h2></div>
         <p class="hint">This dashboard is on the internet, so it is protected by your password.</p>
         <label class="field">Current password<input name="current" type="password" autocomplete="current-password"></label>
         <label class="field">New password<input name="password" type="password" autocomplete="new-password" minlength="10"><small>At least 10 characters. Changing it signs out every device.</small></label>
         <div class="btns"><button type="submit" class="btn btn-accent">Change password</button><button id="sign-out" type="button" class="btn btn-ghost btn-danger">Sign out</button></div>
-      </form>
-    </div>
+    </form>
   </section>
 
   <section id="activity" class="view" hidden aria-labelledby="activity-title">

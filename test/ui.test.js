@@ -7,7 +7,7 @@ const html=readFileSync('public/index.html','utf8');
 const script=readFileSync('public/app.js','utf8').replace('await refresh(true).catch(error=>notice(error.message,true));','window.__ready=refresh(true).catch(error=>notice(error.message,true));');
 const comment=(id,status='pending',extra={})=>({id,author:'Alex',source:'facebook',post_id:'123_456',post_url:'https://www.facebook.com/123_456',post_loaded:1,created_at:Date.now(),message:'Love this product!',context:'A new launch',draft:'Thank you for the support!',review:0,reason:'',error:'',status,...extra});
 async function setup(t,comments=[]) {
-  const data={csrf:'test-csrf',settings:{personality:'Warm and helpful',knowledge:'Our FAQs',examples:'Thanks!',model:'',mode:'approval',pageId:'123',graphVersion:'v26.0',postIds:'',intervalSeconds:30},replyAI:{provider:'huggingface',enabled:true},huggingface:{hasToken:true},live:{on:true,receiving:true},facebook:{configured:true,hasAppSecret:true,verifyToken:'test-verify'},webhookUrl:'https://socialite.example.workers.dev/webhooks/facebook',memory:{enabled:true,total:0,counts:{},summary:null,revision:'0'},comments,activity:[{at:Date.now(),message:'Draft ready for Alex.'}]};
+  const data={csrf:'test-csrf',settings:{personality:'Warm and helpful',knowledge:'Our FAQs',examples:'Thanks!',model:'',mode:'approval',aiProvider:'huggingface',hfSpace:'owner/space',pageId:'123',graphVersion:'v26.0',postIds:'',intervalSeconds:30},replyAI:{provider:'huggingface',enabled:true},huggingface:{hasToken:true},live:{on:true,receiving:true},facebook:{configured:true,hasAppSecret:true,verifyToken:'test-verify'},webhookUrl:'https://socialite.example.workers.dev/webhooks/facebook',memory:{enabled:true,total:0,counts:{},summary:null,revision:'0'},comments,activity:[{at:Date.now(),message:'Draft ready for Alex.'}]};
   const dom=new JSDOM(html,{url:'http://127.0.0.1:8787',runScripts:'outside-only'});
   const w=dom.window, calls=[];
   w.setInterval=fn=>{w.__poll=fn;};
@@ -16,6 +16,8 @@ async function setup(t,comments=[]) {
     if(path.startsWith('/api/memory?')){const offset=Number(new URL(path,'http://127.0.0.1:8787').searchParams.get('offset'));const rows=w.__memoryRows||[];return {ok:true,json:async()=>({offset,total:rows.length,rows:rows.slice(offset,offset+20)})};}
     if(path==='/api/state') return {ok:true,json:async()=>structuredClone(data)};
     const input=JSON.parse(options.body);calls.push({path,input});
+    if(path==='/api/chatgpt/check')return {ok:true,json:async()=>({models:[{id:'gpt-6-sol',name:'GPT 6 Sol'},{id:'gpt-6-luna',name:'GPT 6 Luna'}]})};
+    if(path==='/api/settings')Object.assign(data.settings,input);
     if(path==='/api/settings'&&'learningEnabled' in input)data.memory.enabled=input.learningEnabled;
     if(path==='/api/memory/delete'){w.__memoryRows=w.__memoryRows.filter(r=>r.comment_id!==input.id);data.memory.total=w.__memoryRows.length;data.memory.revision+='x';}
     if(path==='/api/memory/clear'){w.__memoryRows=[];data.memory.total=0;data.memory.revision+='x';}
@@ -30,6 +32,20 @@ async function setup(t,comments=[]) {
   return {w,data,calls,$:s=>w.document.querySelector(s),input:(element,value)=>{element.value=value;element.dispatchEvent(new w.Event('input',{bubbles:true}));}};
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
+test('sidebar test-comment action opens the form from Activity and returns focus on close',async t=>{
+  const s=await setup(t);
+  assert.ok(s.$('aside #open-test'));
+  assert.equal(s.$('#queue .top #open-test'),null);
+  assert.equal(s.$('#empty-test'),null);
+  s.w.location.hash='#activity';await settle();
+  s.$('#open-test').click();
+  assert.equal(s.$('#queue').hidden,false);
+  assert.equal(s.$('#test-form').hidden,false);
+  assert.equal(s.w.document.activeElement,s.$('#test-form textarea[name="message"]'));
+  s.$('#close-test').click();
+  assert.equal(s.$('#test-form').hidden,true);
+  assert.equal(s.w.document.activeElement,s.$('#open-test'));
+});
 
 test('redesigned dashboard loads all panels and preserves connection inputs',async t=>{
   const s=await setup(t,[comment('one'),comment('two','published'),comment('three','error')]);
@@ -40,6 +56,61 @@ test('redesigned dashboard loads all panels and preserves connection inputs',asy
   assert.equal(s.$('input[name="pageToken"]').type,'password');assert.equal(s.$('input[name="appSecret"]').type,'password');
   const ids=[...s.w.document.querySelectorAll('[id]')].map(e=>e.id);assert.equal(new Set(ids).size,ids.length);
 });
+test('Reply AI settings offer and save all three provider choices',async t=>{
+  const s=await setup(t);
+  const radios=[...s.w.document.querySelectorAll('input[name="aiProvider"]')];
+  assert.deepEqual(radios.map(radio=>radio.closest('label').querySelector('strong').textContent),['ChatGPT','Hugging Face','ChatGPT + Hugging Face']);
+  assert.equal(radios.find(radio=>radio.checked).value,'huggingface');
+  assert.equal(s.$('#hf-fields').hidden,false);
+  for(const provider of ['chatgpt','huggingface','fallback']){
+    const radio=radios.find(radio=>radio.value===provider);
+    radio.checked=true;radio.dispatchEvent(new s.w.Event('change',{bubbles:true}));
+    assert.equal(s.$('#hf-fields').hidden,provider==='chatgpt');
+    s.$('#ai-provider-form button[type="submit"]').click();
+    await settle();await settle();
+    assert.equal(s.calls.at(-1).input.aiProvider,provider);
+  }
+});
+test('ChatGPT panel loads models and saves the selected reply model',async t=>{
+  const s=await setup(t);
+  s.data.chatgpt={enabled:true,email:'owner@example.com'};
+  await s.w.__poll();
+  assert.equal(s.$('#ai-status').textContent,'Plan connected');
+  assert.match(s.$('#ai-description').textContent,/owner@example.com/);
+  s.$('#load-models').click();await settle();await settle();
+  assert.deepEqual([...s.$('#model-select').options].map(option=>option.value),['gpt-6-sol','gpt-6-luna']);
+  s.$('#model-select').value='gpt-6-luna';
+  s.$('#model-select').dispatchEvent(new s.w.Event('change'));
+  s.$('#save-model').click();await settle();await settle();
+  assert.deepEqual(s.calls.at(-1),{path:'/api/settings',input:{model:'gpt-6-luna'}});
+  assert.equal(s.$('#model-saved').textContent,'Saved model: gpt-6-luna');
+});
+test('24h tiles show received and handled activity after comments leave their current status',async t=>{
+  const s=await setup(t,[comment('published','published',{created_at:Date.now()-3600e3,published_at:Date.now()-1800e3,publish_kind:'automatic'})]);
+  const now=Date.now();
+  s.data.kpiTimes={new:Array(12).fill(now-3600e3),pending:[now-3000e3,now-2000e3],published:[now-1800e3],automatic:[now-1800e3]};
+  await s.w.__poll();
+  assert.equal(s.$('#stat-new').textContent,'0');
+  assert.equal(s.$('#delta-new').textContent,'+12 in 24h');
+  assert.equal(s.$('#delta-pending').textContent,'+2 in 24h');
+  assert.equal(s.$('#delta-published').textContent,'+1 in 24h');
+  assert.equal(s.$('#stat-auto').textContent,'1');
+  assert.equal(s.$('#delta-auto').textContent,'+1 in 24h');
+});
+test('old published replies with Like warnings stay out of New, including after polling',async t=>{
+  const s=await setup(t,[comment('liked','published',{created_at:Date.parse('2026-10-09T03:27:02Z'),reaction_status:'uncertain',reaction_error:'Check Facebook'})]);
+  assert.equal(s.$('[data-filter="error"]'),null);
+  assert.equal(s.$('#stat-new').textContent,'0');
+  assert.equal(s.$('#nav-count').textContent,'0');
+  s.$('[data-filter="new"]').click();
+  assert.equal(s.$('[data-comment="liked"]'),null);
+  await s.w.__poll();
+  assert.equal(s.$('[data-comment="liked"]'),null);
+  assert.equal(s.$('#stat-new').textContent,'0');
+  s.$('[data-filter="published"]').click();
+  assert.ok(s.$('[data-comment="liked"]'));
+  assert.match(s.$('[data-row="liked"] .row-state').textContent,/Like needs checking/);
+});
 test('search matches comment, author, post caption, and reply text',async t=>{
   const s=await setup(t,[comment('one'),comment('two','pending',{author:'Sam',message:'Shipping question',context:'Summer collection',draft:'Delivery takes three days.'})]);
   for(const query of ['Sam','shipping','summer','three days']) {s.input(s.$('#comment-search'),query);assert.equal(s.w.document.querySelectorAll('.convo').length,1);assert.equal(s.$('.convo').dataset.comment,'two');}
@@ -48,7 +119,7 @@ test('search matches comment, author, post caption, and reply text',async t=>{
 test('unsaved draft survives filtering, search, and polling',async t=>{
   const s=await setup(t,[comment('one'),comment('two','published')]);
   s.input(s.$('[data-draft="one"]'),'My edited reply');
-  s.$('[data-filter="published"]').click();s.$('[data-filter="all"]').click();
+  s.$('[data-filter="published"]').click();s.$('[data-filter="new"]').click();
   assert.equal(s.$('[data-draft="one"]').value,'My edited reply');
   s.input(s.$('#comment-search'),'not found');s.input(s.$('#comment-search'),'');
   await s.w.__poll();await settle();assert.equal(s.$('[data-draft="one"]').value,'My edited reply');
@@ -74,7 +145,7 @@ test('post context, customer comment, and AI reply are distinct and publication 
   assert.deepEqual([...pending.querySelectorAll('h3')].map(h=>h.textContent),['Your Facebook post / Reel','Customer comment','AI reply draft']);
   assert.equal(pending.querySelector('.reply-flag').textContent,'Not published');
   assert.equal(card('discarded'),null);
-  assert.equal(card('test').querySelector('.convo-reply h3').textContent,'Approved test reply');
+  assert.equal(card('test'),null);
   assert.match(card('waiting').querySelector('.empty-reply').textContent,/AI is writing/);
   assert.equal(card('waiting').querySelector('[data-action="approve"]'),null);
   s.$('[data-filter="rejected"]').click();assert.equal(card('discarded').querySelector('.reply-flag').textContent,'Not sent');assert.equal(card('discarded').querySelector('[data-draft]').readOnly,true);
@@ -85,7 +156,7 @@ test('published conversations stay out of All comments, including searches and p
   assert.equal(s.$('[data-comment="sent"]'),null);assert.equal(s.$('#inbox-count').textContent,'2 comments');
   s.input(s.$('#comment-search'),'Published person');assert.equal(s.$('.convo'),null);
   s.$('[data-filter="published"]').click();assert.ok(s.$('[data-comment="sent"]'));
-  s.input(s.$('#comment-search'),'');s.$('[data-filter="all"]').click();await s.w.__poll();await settle();assert.equal(s.$('[data-comment="sent"]'),null);
+  s.input(s.$('#comment-search'),'');s.$('[data-filter="new"]').click();await s.w.__poll();await settle();assert.equal(s.$('[data-comment="sent"]'),null);
 });
 test('explicit regeneration displays the new draft instead of a stale edit',async t=>{
   const s=await setup(t,[comment('one')]);s.input(s.$('[data-draft="one"]'),'My old edit');
@@ -113,7 +184,7 @@ test('dismissing a reply leaves a regeneration action without separate reaction 
   assert.match(s.$('.convo-head .state').textContent,/Reply dismissed/);assert.equal(s.$('[data-action="approve"]'),null);
   assert.equal(s.$('[data-reaction="one"]'),null);assert.match(s.$('.like-text').textContent,/only if you publish/);
   s.$('[data-filter="rejected"]').click();assert.ok(s.$('.convo'));assert.match(s.$('[data-action="draft"]').textContent,/Generate new reply/);
-  s.$('[data-action="draft"]').click();await settle();s.$('[data-filter="all"]').click();
+  s.$('[data-action="draft"]').click();await settle();s.$('[data-filter="new"]').click();
   assert.equal(s.$('[data-draft="one"]').value,'A fresh generated reply.');assert.ok(s.$('[data-action="approve"]'));
 });
 test('comment text is escaped and unsafe post links are replaced',async t=>{
@@ -145,7 +216,7 @@ test('owner ideas survive polling and filters, are sent separately, and produce 
   const s=await setup(t,[comment('one')]);
   s.input(s.$('[data-idea="one"]'),'Thank them for their encouragement. Make it personal.');
   s.input(s.$('[data-draft="one"]'),'My rough wording');
-  s.$('[data-filter="published"]').click();s.$('[data-filter="all"]').click();
+  s.$('[data-filter="published"]').click();s.$('[data-filter="new"]').click();
   const idea=s.$('[data-idea="one"]');idea.focus();idea.setSelectionRange(4,7);
   await s.w.__poll();await settle();
   assert.equal(s.$('[data-idea="one"]').value,'Thank them for their encouragement. Make it personal.');
@@ -201,7 +272,7 @@ test('grammar-only choice survives filtering and polling, preserves the idea, an
   const select=s.$('[data-idea-mode="one"]');select.value='grammar';select.dispatchEvent(new s.w.Event('change',{bubbles:true}));
   assert.equal(s.$('[data-idea="one"]').value,'I appreciates your support!');assert.equal(s.$('[data-idea="one"]').maxLength,1000);
   assert.match(s.$('[data-action="refine"]').textContent,/Correct grammar/);
-  s.$('[data-filter="published"]').click();s.$('[data-filter="all"]').click();await s.w.__poll();await settle();
+  s.$('[data-filter="published"]').click();s.$('[data-filter="new"]').click();await s.w.__poll();await settle();
   assert.equal(s.$('[data-idea-mode="one"]').value,'grammar');assert.equal(s.$('[data-idea="one"]').value,'I appreciates your support!');
   s.$('[data-action="refine"]').click();await settle();
   assert.equal(s.calls[0].input.editingMode,'grammar');assert.equal(s.calls[0].input.instructions,'I appreciates your support!');
@@ -211,12 +282,12 @@ test('grammar-only choice survives filtering and polling, preserves the idea, an
 
 test('new comments are visible before drafting, update while polling, and can be opened from the overview',async t=>{
   const s=await setup(t,[comment('queued','queued',{draft:''}),comment('drafting','generating',{draft:''}),comment('ready'),comment('sent','published'),comment('dismissed','rejected'),comment('removed','removed'),comment('error','error')]);
-  assert.equal(s.$('#stat-new').textContent,'3');assert.equal(s.$('#nav-count').textContent,'4');
+  assert.equal(s.$('#stat-new').textContent,'4');assert.equal(s.$('#nav-count').textContent,'4');
   s.input(s.$('#comment-search'),'not found');s.$('#show-new-comments').click();
-  assert.equal(s.$('#comment-search').value,'');assert.equal(s.w.document.querySelectorAll('.convo').length,3);
+  assert.equal(s.$('#comment-search').value,'');assert.equal(s.w.document.querySelectorAll('.convo').length,4);assert.ok(s.$('[data-comment="error"]'));
   assert.equal(s.$('[data-filter="new"]').getAttribute('aria-pressed'),'true');
-  s.data.comments.find(c=>c.id==='queued').status='published';await s.w.__poll();await settle();assert.equal(s.$('#stat-new').textContent,'2');
-  s.data.comments.push(comment('incoming','queued',{draft:''}));await s.w.__poll();await settle();assert.equal(s.$('#stat-new').textContent,'3');assert.ok(s.$('[data-comment="incoming"]'));
+  s.data.comments.find(c=>c.id==='queued').status='published';await s.w.__poll();await settle();assert.equal(s.$('#stat-new').textContent,'3');
+  s.data.comments.push(comment('incoming','queued',{draft:''}));await s.w.__poll();await settle();assert.equal(s.$('#stat-new').textContent,'4');assert.ok(s.$('[data-comment="incoming"]'));
 });
 
 
@@ -251,7 +322,7 @@ test('published tabs separate owner approvals from automatic sends, preserve unk
   await s.w.__poll();await settle();assert.deepEqual(ids(),['not-sent','auto-new','auto-old']);
   s.$('[data-filter="published"]').click();assert.equal(ids().length,6);
   assert.match(s.$('[data-comment="legacy"] .reply-meta').textContent,/method unavailable/);
-  s.$('[data-filter="all"]').click();assert.equal(s.$('[data-comment="auto-new"]'),null);
+  s.$('[data-filter="new"]').click();assert.equal(s.$('[data-comment="auto-new"]'),null);
 });
 
 
@@ -271,10 +342,14 @@ test('Clear all appears only in archived tabs and clears the category regardless
 
 test('every tab shows its total, independent of search, and counts update after polling and clearing',async t=>{
   const s=await setup(t,[comment('pending'),comment('queued','queued'),comment('auto','published',{publish_kind:'automatic'}),comment('owner','published',{publish_kind:'edited'}),comment('legacy','published'),comment('error','error'),comment('skip','skipped'),comment('dismissed','rejected'),comment('removed','removed')]);
-  const expected={all:3,new:2,pending:1,published:3,approved:1,automatic:1,error:1,rejected:1,skipped:1};
-  for(const [key,n] of Object.entries(expected))assert.match(s.$(`[data-filter="${key}"]`).textContent,new RegExp('\\('+n+'\\)$'));
+  const expected={new:3,pending:1,published:3,approved:1,automatic:1,rejected:1,skipped:1};
+  for(const [key,n] of Object.entries(expected)){
+    const button=s.$(`[data-filter="${key}"]`);
+    if(button.classList.contains('kpi'))assert.equal(button.querySelector('.kpi-n').textContent,String(n));
+    else assert.match(button.textContent,new RegExp('\\('+n+'\\)$'));
+  }
   s.input(s.$('#comment-search'),'no matching text');assert.match(s.$('[data-filter="skipped"]').textContent,/\(1\)$/);
-  s.data.comments.find(c=>c.id==='queued').status='pending';await s.w.__poll();await settle();assert.match(s.$('[data-filter="pending"]').textContent,/\(2\)$/);
+  s.data.comments.find(c=>c.id==='queued').status='pending';await s.w.__poll();await settle();assert.equal(s.$('#stat-pending').textContent,'2');
   s.$('[data-filter="skipped"]').click();s.$('#clear-comment-history').click();await settle();await settle();assert.match(s.$('[data-filter="skipped"]').textContent,/\(0\)$/);
   s.data.tabCounts={...expected,skipped:1234};await s.w.__poll();await settle();assert.equal(s.$('[data-filter="skipped"]').textContent,'No reply needed (1,234)');
 });
@@ -315,14 +390,30 @@ test('keyboard approve needs two presses of A, and typing in a field never trigg
   key('a');await settle();assert.equal(s.calls[0].path,'/api/approve');
 });
 
-test('extra filters live in a menu and the command palette runs commands',async t=>{
+test('only the three secondary filters appear below the clickable overview and the command palette works',async t=>{
   const s=await setup(t,[comment('one'),comment('skip','skipped')]);
-  s.$('#filter-more').click();assert.equal(s.$('#filter-menu').hidden,false);
-  s.$('[data-filter="skipped"]').click();assert.equal(s.$('#filter-menu').hidden,true);assert.equal(s.$('#filter-more-label').textContent,'No reply');
+  assert.equal(s.$('#filter-more'),null);
+  assert.deepEqual([...s.w.document.querySelectorAll('.list-tools [data-filter]')].map(b=>b.dataset.filter),['rejected','skipped','approved']);
+  s.$('[data-filter="skipped"]').click();assert.equal(s.$('[data-filter="skipped"]').getAttribute('aria-pressed'),'true');
   assert.ok(s.$('[data-comment="skip"]'));
   s.w.document.dispatchEvent(new s.w.KeyboardEvent('keydown',{key:'k',ctrlKey:true,bubbles:true}));assert.equal(s.$('#palette').hidden,false);
   s.input(s.$('#palette-input'),'connections');s.$('#palette-input').dispatchEvent(new s.w.KeyboardEvent('keydown',{key:'Enter',bubbles:true}));await settle();
   assert.equal(s.$('#palette').hidden,true);assert.equal(s.w.location.hash,'#connections');
+});
+test('each overview card opens its list, clears search and preserves its count after polling',async t=>{
+  const s=await setup(t,[comment('waiting'),comment('queued','queued'),comment('auto','published',{publish_kind:'automatic'}),comment('manual','published',{publish_kind:'approved'})]);
+  const expected={new:['waiting','queued'],pending:['waiting'],published:['auto','manual'],automatic:['auto']};
+  for(const [key,ids] of Object.entries(expected)){
+    s.input(s.$('#comment-search'),'no matches');
+    const card=s.$(`.kpi[data-filter="${key}"]`),count=card.querySelector('.kpi-n').textContent;
+    card.click();
+    assert.equal(s.$('#comment-search').value,'');
+    assert.deepEqual([...s.w.document.querySelectorAll('[data-row]')].map(row=>row.dataset.row).sort(),ids.sort());
+    assert.equal(card.getAttribute('aria-pressed'),'true');
+    await s.w.__poll();
+    assert.equal(card.querySelector('.kpi-n').textContent,count);
+    assert.equal(card.getAttribute('aria-pressed'),'true');
+  }
 });
 
 test('a refresh with nothing new leaves the open conversation untouched (no twitch, scroll kept)',async t=>{

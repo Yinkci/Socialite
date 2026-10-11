@@ -25,6 +25,34 @@ function setup(t) {
 function add(store,id='comment-1',source='facebook') {store.add({id,post_id:'123_456',message:'Love it!',author:'Alex',context:'New launch',source});}
 function payload(value,entry='123') {return {object:'page',entry:[{id:entry,changes:[{field:'feed',value:{item:'comment',verb:'add',comment_id:'comment-1',post_id:'123_456',parent_id:'123_456',message:'Hello',from:{id:'999',name:'Alex'},...value}}]}]};}
 
+test('24h activity retains received, approval, publication and attention timestamps after status changes',t=>{
+  const {store}=setup(t),now=Date.now();
+  add(store,'handled');
+  store.update('handled',{status:'pending'});
+  store.update('handled',{status:'published',published_at:now});
+  add(store,'issue');
+  store.update('issue',{status:'error'});
+  store.update('issue',{status:'queued'});
+  add(store,'like-issue');
+  store.update('like-issue',{status:'published',published_at:now,publish_kind:'automatic'});
+  store.update('like-issue',{reaction_status:'error',reaction_error:'Like failed'});
+  add(store,'sample','test');
+  const times=store.kpiTimes(now-86400e3);
+  assert.equal(times.new.length,3);
+  assert.equal(times.pending.length,1);
+  assert.equal(times.published.length,2);
+  assert.equal(times.automatic.length,1);
+  assert.equal(store.tabCounts().error,1);
+  assert.equal(store.list().find(c=>c.id==='handled').status,'published');
+  assert.equal(store.list().find(c=>c.id==='issue').status,'queued');
+});
+test('24h received count includes comments beyond the 300-row inbox limit',t=>{
+  const {store}=setup(t);
+  for(let i=0;i<301;i++)add(store,'recent-'+i);
+  assert.equal(store.list().length,300);
+  assert.equal(store.kpiTimes().new.length,301);
+});
+
 test('webhook rejects invalid signatures and verifies exact raw bytes',()=>{
   const raw=Buffer.from('{"test":1}'), secret='test-secret';
   const sig='sha256='+createHmac('sha256',secret).update(raw).digest('hex');
@@ -353,8 +381,8 @@ test('clearing includes archived entries beyond the list limit and persists acro
 test('tab totals match inbox categories and exclude removed and cleared history',t=>{
   const s=setup(t);
   for(const [id,status,kind,reaction] of [['new','queued','','pending'],['ready','pending','','pending'],['auto','published','automatic','error'],['owner','published','edited','pending'],['old','published','','pending'],['skip','skipped','','error'],['dismissed','rejected','','error'],['removed','removed','','error'],['failed','error','','pending']]){add(s.store,id);s.store.update(id,{status,publish_kind:kind,reaction_status:reaction});}
-  assert.deepEqual(s.store.tabCounts(),{all:3,new:2,pending:1,published:3,approved:1,automatic:1,error:2,rejected:1,skipped:1});
-  s.store.clearHistory('skipped');s.store.clearHistory('rejected');const c=s.store.tabCounts();assert.equal(c.skipped,0);assert.equal(c.rejected,0);assert.equal(c.error,1);
+  assert.deepEqual(s.store.tabCounts(),{all:3,new:3,pending:1,published:3,approved:1,automatic:1,error:3,rejected:1,skipped:1});
+  s.store.clearHistory('skipped');s.store.clearHistory('rejected');const c=s.store.tabCounts();assert.equal(c.skipped,0);assert.equal(c.rejected,0);assert.equal(c.error,2);
 });
 
 

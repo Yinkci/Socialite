@@ -1,6 +1,6 @@
 # Socialite Cloud
 
-The Cloudflare version of Socialite. It runs online at `https://socialite.<subdomain>.workers.dev`, so no PC, tunnel or startup script is needed. Reply drafts come from your Hugging Face ZeroGPU Space.
+The Cloudflare version of Socialite. It runs online at `https://socialite.<subdomain>.workers.dev`, so no PC, tunnel or startup script is needed. In Connections, Reply AI can use ChatGPT, Hugging Face, or ChatGPT with Hugging Face as backup.
 
 The local app in `../Automation` is separate and unchanged. Only one of the two receives Facebook comments at a time (see [Switching between the apps](#switching-between-the-apps)).
 
@@ -12,7 +12,7 @@ The local app in `../Automation` is separate and unchanged. Only one of the two 
 | Sign-in | `public/login.html`, one owner password (PBKDF2 hash) and a secure session cookie |
 | API, webhook and background work | `src/index.js`: a Worker plus one SQLite-backed Durable Object (`SocialiteApp`) |
 | Comments, settings, reply memory | SQLite inside the Durable Object |
-| Page token, App Secret, HF token | Durable Object storage, encrypted at rest and never sent to the dashboard |
+| Page token, App Secret, HF token, copied ChatGPT session | Durable Object storage, encrypted at rest and never sent to the dashboard |
 | Drafting loop | Durable Object alarm every 15 seconds; a cron runs every 5 minutes as a watchdog |
 | AI | `hf-space/`, the Space running Qwen3.5-9B on ZeroGPU (`YinKci/socialite-replies`) |
 
@@ -44,6 +44,14 @@ npx wrangler secret put IMPORT_TOKEN
 node scripts/import-from-local.js https://socialite.<subdomain>.workers.dev <import-token>
 npx wrangler secret delete IMPORT_TOKEN
 ```
+
+## Experimental ChatGPT plan session transfer
+
+OpenAI documents protected session transfer for a self-hosted VM, but does not document this Cloudflare Worker arrangement. The local app must already be signed in with ChatGPT plan usage. This copies its OAuth session to the online app; it can stop working and may require signing in again locally. Choose **ChatGPT + Hugging Face** in Connections to try ChatGPT first, then Hugging Face when ChatGPT fails. No API key is used.
+
+Deploy the updated Worker, then temporarily set `IMPORT_TOKEN` as a Worker secret and deploy again so the Durable Object receives the new binding. Pass that same value to the transfer script through the `SOCIALITE_IMPORT_TOKEN` environment variable, run `node scripts/import-chatgpt-from-local.js https://socialite.<subdomain>.workers.dev`, and delete the Worker secret immediately afterward. The script reads the Windows-protected local session and sends it directly to the Worker over HTTPS without writing another credential file or printing tokens. It verifies a private test draft before reporting success. In Connections, **Test ChatGPT** checks model access; **Remove copied session** deletes the online copy without revoking the local app's sign-in.
+
+[OpenAI's documented VM transfer](https://developers.openai.com/siwc/token-sharing-open-source/self-hosted-vms) and [plan usage eligibility](https://developers.openai.com/siwc/token-sharing-open-source) describe the supported paths.
 
 ## Switching between the apps: Live On/Off
 
