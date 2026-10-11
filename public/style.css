@@ -107,7 +107,8 @@ kbd{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 
 .side-date{font-size:var(--f-11);color:var(--tx-3);padding:0 var(--u3)}
 
 .main{min-width:0;padding:var(--u6) var(--u8) var(--u8);outline:none}
-.view{max-width:1480px;margin:0 auto;animation:view-in var(--med) var(--out)}
+/* Opacity only: a transform here would trap the phone filter sheet (position:fixed) inside the view. */
+.view{max-width:1480px;margin:0 auto;animation:fade var(--med) var(--out)}
 @keyframes view-in{from{opacity:0;transform:translateY(4px)}to{opacity:1;transform:none}}
 .top{display:flex;align-items:center;justify-content:space-between;gap:var(--u5);flex-wrap:wrap;min-height:36px;margin-bottom:var(--u6)}
 .title{font-size:var(--f-20);font-weight:600}
@@ -499,3 +500,15 @@ select{appearance:none;padding-right:var(--u8);background-image:linear-gradient(
 
 /* Phones: no keyboard, so no search box or command button. */
 @media (max-width:900px){.search,.palette-btn{display:none}}
+
+/* Phones: the filter menu opens as a bottom sheet (the inbox panel would clip a dropdown),
+   and the filter buttons keep full labels and scroll sideways instead of truncating. */
+@media (max-width:900px){
+  .menu{position:fixed;left:var(--u5);right:var(--u5);top:auto;bottom:var(--u5);z-index:90;min-width:0;padding:var(--u3);border-radius:12px;box-shadow:0 0 0 1px var(--line-2),0 -12px 48px rgba(0,0,0,.75);animation:sheet-in var(--med) var(--out)}
+  .menu button{height:44px;font-size:var(--f-14)}
+  .seg{overflow-x:auto;scrollbar-width:none}
+  .seg::-webkit-scrollbar{display:none}
+  .seg button{flex:none;padding:0 var(--u4);overflow:visible}
+}
+@keyframes sheet-in{from{opacity:0;transform:translateY(16px)}to{opacity:1;transform:none}}
+
