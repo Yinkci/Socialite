@@ -114,6 +114,53 @@ kbd{display:inline-grid;place-items:center;min-width:18px;height:18px;padding:0 
 .top-sub{width:100%;margin-top:calc(var(--u2) * -1);font-size:var(--f-12);color:var(--tx-2)}
 .top-tools{display:flex;gap:var(--u4)}
 
+/* Page header: the connected Page on the left, one follower module on the right, a sync hairline along the bottom. */
+.pagebar{position:relative;display:flex;align-items:center;justify-content:space-between;gap:var(--u8);max-width:1480px;margin:0 auto var(--u6);padding:var(--u5) var(--u7);background:radial-gradient(120% 160% at 0% 0%,rgba(198,255,61,.05),transparent 45%),var(--s1);border:1px solid var(--line);border-radius:var(--r3);overflow:hidden;isolation:isolate}
+.pagebar::after{content:"";position:absolute;inset:0;z-index:-1;background:linear-gradient(100deg,transparent 35%,rgba(198,255,61,.06) 50%,transparent 65%);transform:translateX(-100%);opacity:0}
+.pagebar[data-live="true"]{border-color:rgba(198,255,61,.22)}
+.pagebar[data-live="true"]::after{opacity:1;animation:scan 6s linear infinite}
+@keyframes scan{to{transform:translateX(100%)}}
+.pb-id{display:flex;align-items:center;gap:var(--u5);min-width:0}
+.pb-avatar{position:relative;display:grid;place-items:center;width:44px;height:44px;flex:none;border-radius:12px;background:var(--s3);font-weight:700;font-size:var(--f-16);color:var(--tx)}
+.pb-avatar img{width:44px;height:44px;border-radius:12px;object-fit:cover}
+.pb-avatar::before{content:"";position:absolute;inset:-2px;z-index:-1;border-radius:14px;background:var(--line-2)}
+.pagebar[data-live="true"] .pb-avatar::before{background:conic-gradient(from var(--spin,0deg),transparent 0 55%,var(--acc) 80%,transparent 100%);animation:spin 3.2s linear infinite}
+@property --spin{syntax:"<angle>";inherits:false;initial-value:0deg}
+@keyframes spin{to{--spin:360deg}}
+.pb-name{display:flex;flex-direction:column;gap:var(--u2);min-width:0}
+.pb-name strong{font-size:var(--f-16);font-weight:600;letter-spacing:-.01em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pb-sub{display:flex;align-items:center;gap:var(--u3);flex-wrap:wrap;font-size:var(--f-12);color:var(--tx-3)}
+.pb-sub .dot{margin:0;width:6px;height:6px}
+.pagebar[data-live="true"] #head-sync{color:var(--acc)}
+.pb-time:not(:empty){padding-left:var(--u4);margin-left:var(--u1);border-left:1px solid var(--line-2);font-size:var(--f-11)}
+/* follower module: label and figure on the left, trend on the right, one shared baseline */
+.pb-metric{display:grid;grid-template-columns:auto 150px;grid-template-areas:"label trend" "figure trend";align-items:end;column-gap:var(--u7);flex:none}
+.pb-label{grid-area:label;font-size:var(--f-11);color:var(--tx-3);margin-bottom:var(--u2)}
+.pb-figure{grid-area:figure;display:flex;align-items:baseline;gap:var(--u4);line-height:1}
+.pb-count{font-size:32px;font-weight:500;letter-spacing:-.04em;color:var(--tx);transition:color var(--med) var(--out),text-shadow var(--med) var(--out)}
+.pb-count.up{color:var(--acc);text-shadow:0 0 18px rgba(198,255,61,.55)}
+.pb-count.down{color:var(--err)}
+.pb-delta:empty{display:none}
+.pb-delta{padding:var(--u1) var(--u3);border-radius:999px;font-size:var(--f-11);line-height:1.3;color:var(--tx-2);background:var(--s3)}
+.pb-delta.up{color:var(--acc);background:var(--acc-dim)}
+.pb-delta.down{color:var(--err);background:var(--err-dim)}
+.pb-trend{grid-area:trend;width:150px;height:40px;overflow:visible;align-self:center}
+.pb-trend .area{fill:url(#pb-fill)}
+.pb-trend .line{fill:none;stroke:var(--acc);stroke-width:1.5;vector-effect:non-scaling-stroke;filter:drop-shadow(0 0 4px rgba(198,255,61,.6))}
+.pb-trend .flat{fill:none;stroke:var(--line-2);stroke-width:1.5;stroke-dasharray:3 4;vector-effect:non-scaling-stroke}
+.pb-trend .tip{fill:var(--acc)}
+.pb-trend .tip-quiet{fill:var(--tx-3)}
+/* sync countdown: a hairline along the bottom edge, filling until the next follower refresh */
+.pb-next{position:absolute;left:0;right:0;bottom:0;height:2px;background:transparent}
+.pb-next span{position:absolute;inset:0 auto 0 0;width:calc(var(--p,0) * 100%);background:linear-gradient(90deg,transparent,var(--tx-3));transition:width 1s linear}
+.pagebar[data-live="true"] .pb-next span{background:linear-gradient(90deg,transparent,var(--acc));box-shadow:0 0 8px var(--acc)}
+@media (max-width:900px){
+  .pagebar{flex-direction:column;align-items:stretch;gap:var(--u5);padding:var(--u5)}
+  .pb-metric{grid-template-columns:auto minmax(0,1fr)}
+  .pb-trend{width:100%}
+  .pb-count{font-size:28px}
+}
+
 /* ---------- Controls ---------- */
 .btn{display:inline-flex;align-items:center;justify-content:center;gap:var(--u3);height:30px;padding:0 var(--u5);border:1px solid var(--line-2);border-radius:var(--r2);background:var(--s3);color:var(--tx);font-size:var(--f-13);font-weight:500;line-height:1;white-space:nowrap;text-decoration:none;cursor:pointer;transition:background var(--fast) var(--out),border-color var(--fast) var(--out),color var(--fast) var(--out),box-shadow var(--fast) var(--out)}
 .btn:hover{background:var(--s4);border-color:#45454d}
@@ -192,7 +239,7 @@ select{appearance:none;padding-right:var(--u8);background-image:linear-gradient(
 .kpi{display:grid;grid-template-columns:1fr auto;grid-template-areas:"label label" "n spark" "delta spark";align-items:end;gap:0 var(--u5);padding:var(--u5) var(--u6);border:0;border-right:1px solid var(--line);background:none;text-align:left;color:inherit;font:inherit}
 .kpi-label{grid-area:label;font-size:var(--f-12);color:var(--tx-2);margin-bottom:var(--u3)}
 .kpi-n{grid-area:n;font-size:var(--f-24);font-weight:500;line-height:1;letter-spacing:-.02em}
-.kpi-delta{grid-area:delta;font-size:var(--f-11);color:var(--tx-3);margin-top:var(--u3)}
+.kpi-delta{grid-area:delta;font-size:var(--f-11);color:var(--tx-3);margin-top:var(--u3);white-space:nowrap}
 .spark{grid-area:spark;width:96px;height:24px;align-self:end;color:var(--tx-3)}
 .spark rect{fill:currentColor}
 .spark .now{fill:var(--acc)}
@@ -449,3 +496,6 @@ select{appearance:none;padding-right:var(--u8);background-image:linear-gradient(
 .gate .panel>.hint{margin-bottom:var(--u6)}
 .gate-error{margin-bottom:var(--u5)}
 .login-submit{width:100%;height:34px}
+
+/* Phones: no keyboard, so no search box or command button. */
+@media (max-width:900px){.search,.palette-btn{display:none}}

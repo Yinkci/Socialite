@@ -349,3 +349,36 @@ test('switching Live on and off keeps the agent card intact and shows no error',
   s.data.live={on:true};await s.w.__poll();await settle();
   assert.equal(s.$('#live-label').textContent,'Live On');assert.equal(s.$('#live-switch').getAttribute('aria-checked'),'true');
 });
+
+test('the header shows the Page name and exact follower count on every screen',async t=>{
+  const s=await setup(t);s.data.facebook.pageName='Wine and Silence';s.data.facebook.followersCount=7763;s.data.facebook.followersUpdatedAt=Date.now();
+  await s.w.__poll();await settle();
+  assert.equal(s.$('#head-page').textContent,'Wine and Silence');assert.equal(s.$('#head-followers').textContent,'7,763');assert.equal(s.$('#head-followers-label').textContent,'followers');assert.match(s.$('#head-updated').textContent,/Updated/);
+  assert.ok(!s.$('.pagebar').closest('.view'),'header sits outside the views, so it shows on every screen');
+  s.data.facebook.followersCount=null;await s.w.__poll();await settle();assert.equal(s.$('#head-followers').textContent,'–');assert.equal(s.$('#head-updated').textContent,'');
+});
+
+test('header trend: follower history is kept in the browser and shows the 24h change',async t=>{
+  const s=await setup(t);
+  s.w.localStorage.setItem('socialite:followers:123',JSON.stringify([[Date.now()-26*3600e3,7760],[Date.now()-3*3600e3,7761]]));
+  s.data.facebook.followersCount=7763;s.data.facebook.followersUpdatedAt=Date.now();s.data.live={on:true};
+  await s.w.__poll();await settle();
+  assert.equal(s.$('#head-followers').textContent,'7,763');
+  assert.equal(s.$('#head-delta').textContent,'+3 in 24h');assert.ok(s.$('#head-delta').classList.contains('up'));
+  assert.ok(s.$('#head-trend path.line'),'trend line drawn');
+  assert.equal(s.$('.pagebar').dataset.live,'true');assert.equal(s.$('#head-sync').textContent,'Live on Facebook');
+  assert.equal(JSON.parse(s.w.localStorage.getItem('socialite:followers:123')).length,3,'new reading saved');
+  s.data.live={on:false};await s.w.__poll();await settle();assert.equal(s.$('#head-sync').textContent,'Paused while Live Off');
+});
+
+test('header stays quiet when followers did not change, and shows the Page logo when connected',async t=>{
+  const s=await setup(t);
+  s.w.localStorage.setItem('socialite:followers:123',JSON.stringify([[Date.now()-5*3600e3,7770]]));
+  s.data.facebook.followersCount=7770;s.data.facebook.followersUpdatedAt=Date.now();
+  await s.w.__poll();await settle();
+  assert.equal(s.$('#head-delta').textContent,'','no "0 in 24h" badge');
+  assert.ok(s.$('#head-trend .flat'),'quiet dashed baseline');assert.equal(s.$('#head-trend .line'),null,'no glowing line');
+  assert.equal(s.$('#head-logo').hidden,false);assert.equal(s.$('#head-initial').hidden,true);
+  s.data.facebook.configured=false;await s.w.__poll();await settle();
+  assert.equal(s.$('#head-logo').hidden,true);assert.equal(s.$('#head-initial').textContent,'?');
+});

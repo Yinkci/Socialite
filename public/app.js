@@ -166,6 +166,66 @@ function renderKpis(){
   }
 }
 
+// ---------- Page header: followers, trend, sync ----------
+const SYNC_MS=5*60*1000;
+let shownFollowers=null,countFrame=0;
+const calm=()=>!window.requestAnimationFrame||window.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+// Rolls the follower number to its new value; flashes lime when it goes up.
+function countTo(value){
+  const el=$('#head-followers');window.cancelAnimationFrame?.(countFrame);
+  if(value===null){shownFollowers=null;el.textContent='–';return;}
+  const from=shownFollowers;shownFollowers=value;
+  if(from===value){el.textContent=value.toLocaleString();return;}
+  el.classList.remove('up','down');
+  if(from!==null)el.classList.add(value>from?'up':'down');
+  if(calm()){el.textContent=value.toLocaleString();setTimeout(()=>el.classList.remove('up','down'),1600);return;}
+  const start=from??Math.max(0,Math.round(value*.9)),t0=performance.now(),dur=from===null?900:700;
+  const step=now=>{const k=Math.min(1,(now-t0)/dur),e=1-Math.pow(1-k,3);el.textContent=Math.round(start+(value-start)*e).toLocaleString();if(k<1)countFrame=requestAnimationFrame(step);else setTimeout(()=>el.classList.remove('up','down'),1400);};
+  countFrame=requestAnimationFrame(step);
+}
+// Facebook only gives the current count, so each fetched value is kept in this browser to draw the trend.
+function followerHistory(pageId,value,at){
+  const key='socialite:followers:'+pageId;let list=[];
+  try{list=JSON.parse(localStorage.getItem(key)||'[]');}catch{}
+  if(!Array.isArray(list))list=[];
+  if(value!==null&&at&&!list.some(p=>p[0]===at)){list.push([at,value]);list.sort((a,b)=>a[0]-b[0]);}
+  list=list.filter(p=>p[0]>Date.now()-7*86400e3).slice(-400);
+  try{localStorage.setItem(key,JSON.stringify(list));}catch{}
+  return list;
+}
+// A glowing line only when the count actually moved; otherwise a quiet dashed baseline.
+function drawTrend(points){
+  const svg=$('#head-trend');
+  const vals=points.map(p=>p[1]),moved=points.length>1&&Math.max(...vals)!==Math.min(...vals);
+  if(!moved){svg.innerHTML='<line class="flat" x1="0" y1="24" x2="160" y2="24"/>'+(points.length?'<circle class="tip-quiet" cx="160" cy="24" r="2.5"/>':'');return;}
+  const t0=points[0][0],t1=points.at(-1)[0],lo=Math.min(...vals),hi=Math.max(...vals);
+  const xy=points.map(([t,v])=>[((t-t0)/((t1-t0)||1))*160,36-((v-lo)/(hi-lo))*30]);
+  const line=xy.map(([x,y],i)=>(i?'L':'M')+x.toFixed(1)+' '+y.toFixed(1)).join(' ');
+  const [lx,ly]=xy.at(-1);
+  svg.innerHTML='<defs><linearGradient id="pb-fill" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c6ff3d" stop-opacity=".28"/><stop offset="1" stop-color="#c6ff3d" stop-opacity="0"/></linearGradient></defs>'+`<path class="area" d="${line} L160 40 L0 40 Z"/><path class="line" d="${line}"/><circle class="tip" cx="${lx.toFixed(1)}" cy="${ly.toFixed(1)}" r="2.5"/>`;
+}
+function renderPagebar(){
+  const fb=state.facebook,s=state.settings,ok=!!fb.configured,n=fb.followersCount,has=ok&&Number.isSafeInteger(n)&&n>=0,at=fb.followersUpdatedAt,live=!!state.live?.on;
+  const name=ok?(fb.pageName||'Page '+s.pageId):'Facebook Page not connected';
+  $('.pagebar').dataset.live=String(ok&&live);
+  $('#head-page').textContent=name;
+  $('#head-logo').hidden=!ok;$('#head-initial').hidden=ok;
+  $('#head-initial').textContent=ok?name.trim().slice(0,1).toUpperCase():'?';
+  $('#head-dot').dataset.on=String(ok);
+  $('#head-sync').textContent=!ok?'Not connected':live?'Live on Facebook':'Paused while Live Off';
+  $('#head-followers-label').textContent=n===1?'follower':'followers';
+  $('#head-updated').textContent=has&&at?'Updated '+new Date(at).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}):'';
+  countTo(has?n:null);
+  const history=has?followerHistory(s.pageId,n,at):[];
+  const day=history.filter(p=>p[0]>=Date.now()-86400e3), base=history.filter(p=>p[0]<Date.now()-86400e3).at(-1)||day[0];
+  drawTrend(day.length>1?day:history.slice(-24));
+  // The change badge appears only when the count moved in the last 24 hours.
+  const delta=$('#head-delta'),d=has&&base&&history.length>1?n-base[1]:0;
+  delta.classList.remove('up','down');
+  delta.textContent=d?(d>0?'+':'')+d.toLocaleString()+' in 24h':'';
+  if(d)delta.classList.add(d>0?'up':'down');
+  $('#head-next').style.setProperty('--p',has&&at&&live?Math.min(1,Math.max(0,(Date.now()-at)/SYNC_MS)).toFixed(3):'0');
+}
 function render(){
   $('#header-date').textContent=new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});
   const replyAI=state.replyAI||{provider:'huggingface',enabled:false};
@@ -185,6 +245,7 @@ function render(){
   $('#rail-fb-updated').hidden=!hasFollowers||!updated;
   $('#rail-fb-updated').textContent=updated?'Updated '+new Date(updated).toLocaleTimeString(undefined,{hour:'2-digit',minute:'2-digit'}):'';
   $('#rail-fb-updated').title=updated?'Last fetched: '+new Date(updated).toLocaleString()+'. Refreshes every 5 minutes. Verify Page in Connections to refresh now.':'';
+  renderPagebar();
   const newCount=state.comments.filter(isNewComment).length;
   $('#stat-new').textContent=newCount.toLocaleString();
   const openCount=state.comments.filter(c=>isNewComment(c)||needsAttention(c)).length;
@@ -234,12 +295,17 @@ $('#memory-clear').onclick=()=>action($('#memory-clear'),async()=>{await api('me
 $('#memory-list').addEventListener('click',event=>{const b=event.target.closest('[data-memory-delete]');if(b)action(b,async()=>{await api('memory/delete',{id:b.dataset.memoryDelete});memorySignature='';},'Example forgotten.');});
 $('#memory-prev').onclick=()=>{memoryOffset=Math.max(0,memoryOffset-20);renderMemory();};
 $('#memory-next').onclick=()=>{memoryOffset+=20;renderMemory();};
-async function refresh(initial=false){if(loading)return;loading=true;try{state=await fetch('/api/state').catch(()=>{throw new Error('Cannot reach Socialite. Check your internet connection.');}).then(r=>{if(r.status===401){location.replace('/login');throw new Error('Please sign in.');}if(!r.ok)throw new Error('Cannot load dashboard');return r.json();});render();if(initial){for(const [id,key] of [['personality-input','personality'],['knowledge-input','knowledge'],['examples-input','examples'],['reply-policy-input','replyPolicy'],['mode-input','mode'],['interval-input','intervalSeconds'],['comment-delay-input','commentDelaySeconds'],['posts-input','postIds'],['page-input','pageId'],['version-input','graphVersion']])$('#'+id).value=key==='replyPolicy'&&state.settings.replyPolicyPageId!==state.settings.pageId?'':state.settings[key]??'';$('#skip-emoji-input').checked=state.settings.replyPolicyPageId===state.settings.pageId&&!!state.settings.skipEmojiOnly;fillReplyAI();}}finally{loading=false;}}
+async function refresh(initial=false){if(loading)return;loading=true;try{state=await fetch('/api/state').catch(()=>{throw new Error('Cannot reach Socialite. Check your internet connection.');}).then(r=>{if(r.status===401){location.replace('/login');throw new Error('Please sign in.');}if(!r.ok)throw new Error('Cannot load dashboard');return r.json();});render();if(initial){for(const [id,key] of [['personality-input','personality'],['knowledge-input','knowledge'],['examples-input','examples'],['reply-policy-input','replyPolicy'],['mode-input','mode'],['interval-input','intervalSeconds'],['comment-delay-input','commentDelaySeconds'],['posts-input','postIds'],['page-input','pageId'],['version-input','graphVersion']])$('#'+id).value=key==='replyPolicy'&&state.settings.replyPolicyPageId!==state.settings.pageId?'':state.settings[key]??'';$('#skip-emoji-input').checked=state.settings.replyPolicyPageId===state.settings.pageId&&!!state.settings.skipEmojiOnly;fillReplyAI();toTop();}}finally{loading=false;}}
+// After the first load draws, undo the browser's jump to the #screen anchor so the Page header stays in view.
+function toTop(){window.scrollTo?.(0,0);window.requestAnimationFrame?.(()=>window.scrollTo?.(0,0));setTimeout(()=>window.scrollTo?.(0,0),300);}
 
 // ---------- Inbox interactions ----------
 function showTest(){$('#test-form').hidden=false;$('#test-form textarea[name="message"]').focus();}
 function hideTest(){$('#test-form').hidden=true;$('#open-test').focus();}
-window.addEventListener('hashchange',nav);nav();
+// Menu links are #anchors; the browser would jump past the Page header, so each screen opens at the top.
+if('scrollRestoration' in history)history.scrollRestoration='manual';
+window.addEventListener('hashchange',()=>{nav();window.scrollTo?.(0,0);});nav();
+
 $('#open-test').onclick=showTest;$('#close-test').onclick=hideTest;
 $('#comment-rows').addEventListener('click',event=>{const row=event.target.closest('[data-row]');if(row)selectComment(row.dataset.row,{open:true,scroll:false});});
 $('#comments').addEventListener('click',event=>{

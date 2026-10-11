@@ -50,6 +50,21 @@
 <main id="main" class="main" tabindex="-1">
   <div id="notice" class="toast" hidden role="status"></div>
   <span id="section-label" class="sr-only">Comment inbox</span>
+  <div class="pagebar" aria-label="Facebook Page" data-live="false">
+    <div class="pb-id">
+      <span class="pb-avatar" aria-hidden="true"><img id="head-logo" src="/page-logo.jpg" alt="" width="44" height="44" hidden><span id="head-initial">?</span></span>
+      <div class="pb-name">
+        <strong id="head-page">Facebook Page not connected</strong>
+        <span class="pb-sub"><span id="head-dot" class="dot" aria-hidden="true"></span><span id="head-sync">Not connected</span><span id="head-updated" class="pb-time mono"></span></span>
+      </div>
+    </div>
+    <div class="pb-metric">
+      <span class="pb-label">Followers</span>
+      <span class="pb-figure"><strong id="head-followers" class="pb-count mono" aria-live="polite">–</strong><span id="head-delta" class="pb-delta mono"></span><span id="head-followers-label" class="sr-only">followers</span></span>
+      <svg id="head-trend" class="pb-trend" viewBox="0 0 160 40" preserveAspectRatio="none" aria-hidden="true"></svg>
+    </div>
+    <span class="pb-next" aria-hidden="true"><span id="head-next"></span></span>
+  </div>
 
   <section id="queue" class="view view-inbox" aria-labelledby="queue-title">
     <header class="top">
