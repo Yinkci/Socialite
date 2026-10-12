@@ -7,6 +7,32 @@ import { createHmac } from 'node:crypto';
 import { openStore } from './helpers.js';
 import { Facebook, validSignature } from '../src/facebook.js';
 import { Workflow } from '../src/workflow.js';
+import { buildPrompt } from '../src/prompt.js';
+
+test('automatic agreement stays skipped but an explicit manual request produces a held draft',async t=>{
+  for(const source of ['test','facebook']){
+    const s=setup(t);add(s.store,'agreement',source);s.store.saveSettings({...s.store.settings(),mode:'automatic'});
+    s.store.update('agreement',{message:'Yeah, TRUTH! ❤️ 😳 🔥',context:'Some Places Will Never Feel the Same Again.'});
+    s.facebook.current=async()=>({message:'Yeah, TRUTH! ❤️ 😳 🔥'});
+    let received;
+    s.ai.generate=async(settings,c)=>{received=c;return c.manualRequest?{reply_decision:'REPLY',reply:'Some places hold memories that stay with us.',needs_review:false}:{reply_decision:'SKIP',reply:'',reason:'Simple agreement with the post.',needs_review:true};};
+    await s.workflow.tick();assert.equal(s.store.get('agreement').status,'skipped');
+    assert.equal(received.manualRequest,false,'automatic classification is unchanged');
+    const result=await s.workflow.generate('agreement',undefined,'agree','improve',true);
+    assert.equal(result.ok,true);assert.equal(received.manualRequest,true);assert.equal(received.ownerInstructions,'agree');
+    const draft=s.store.get('agreement');assert.equal(draft.status,'pending');assert.equal(draft.manual_hold,1);assert.equal(draft.review,1);
+    assert.match(buildPrompt(s.store.settings(),received).instructions,/Manual owner request/);
+    await s.workflow.tick();assert.equal(s.posted(),0,'manually requested draft never auto-publishes');
+  }
+});
+
+test('manual Generate reply bypasses automatic emoji skipping without requiring owner text',async t=>{
+  const s=setup(t);add(s.store,'emoji','test');s.store.saveSettings({...s.store.settings(),skipEmojiOnly:true,replyPolicyPageId:'123'});
+  s.store.update('emoji',{message:'❤️',status:'skipped',reply_decision:'SKIP'});let received;
+  s.ai.generate=async(settings,c)=>{received=c;return {reply_decision:'REPLY',reply:'Glad this resonated with you.',needs_review:false};};
+  await s.workflow.generate('emoji',undefined,undefined,'improve',true);
+  assert.equal(received.manualRequest,true);assert.equal(s.store.get('emoji').status,'pending');assert.equal(s.store.get('emoji').manual_hold,1);
+});
 
 function setup(t) {
   const dir=mkdtempSync(join(tmpdir(),'page-studio-test-')), store=openStore(dir);

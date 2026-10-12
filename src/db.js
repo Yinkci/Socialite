@@ -1,15 +1,21 @@
 // Makes a Durable Object's SQLite storage look like node:sqlite's DatabaseSync,
 // so Store, ReplyMemory and the workflow run unchanged on Cloudflare.
 export class DurableDatabase {
-  constructor(sql) { this.sql=sql; }
-  exec(query) { this.sql.exec(query).toArray(); }
+  constructor(sql) { this.sql=sql; this.revision=0; this.settingsCache=null; }
+  exec(query) { this.sql.exec(query).toArray(); this.revision++; this.settingsCache=null; }
   prepare(query) {
-    const sql=this.sql;
+    const sql=this.sql, db=this;
     return {
-      get: (...args)=>sql.exec(query,...args).toArray()[0],
+      get: (...args)=>{
+        // Settings are read many times per work pass. All writes invalidate this one-row cache.
+        if(query==='SELECT value FROM settings WHERE id=1'&&db.settingsCache)return {...db.settingsCache};
+        const row=sql.exec(query,...args).toArray()[0];
+        if(query==='SELECT value FROM settings WHERE id=1')db.settingsCache=row;
+        return row;
+      },
       all: (...args)=>sql.exec(query,...args).toArray(),
       // rowsWritten also counts index writes, so ask SQLite for the real change count.
-      run: (...args)=>{sql.exec(query,...args).toArray();return {changes:sql.exec('SELECT changes() AS n').one().n};},
+      run: (...args)=>{sql.exec(query,...args).toArray();const changes=sql.exec('SELECT changes() AS n').one().n;if(changes){db.revision++;db.settingsCache=null;}return {changes};},
     };
   }
 }
@@ -17,7 +23,7 @@ export class DurableDatabase {
 // Secrets (Page token, App Secret, HF token, verify token) and login sessions.
 // Durable Object storage is encrypted at rest by Cloudflare and is never sent to the dashboard.
 export class Vault {
-  constructor(kv) { this.kv=kv; }
+  constructor(kv) { this.kv=kv; this.revision=0; }
   get(key) { return this.kv.get('vault:'+key); }
-  set(key,value) { if(value===undefined||value===null||value==='')this.kv.delete('vault:'+key);else this.kv.put('vault:'+key,value); }
+  set(key,value) { if(value===undefined||value===null||value==='')this.kv.delete('vault:'+key);else this.kv.put('vault:'+key,value);this.revision++; }
 }

@@ -12,6 +12,9 @@ import { Facebook, validSignature } from './facebook.js';
 import { Workflow } from './workflow.js';
 import { LiveSwitch } from './live.js';
 import { hashPassword, verifyPassword, randomToken, sha256 } from './auth.js';
+import { DashboardCache } from './dashboard-cache.js';
+import { ensureWorkAlarm } from './alarm.js';
+import { CloudflareUsage } from './cloudflare-usage.js';
 
 const TICK_MS=15000, STATS_MS=5*60*1000, SESSION_MS=30*24*60*60*1000;
 const SECURITY_HEADERS={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'};
@@ -19,12 +22,20 @@ const SECURITY_HEADERS={'Cache-Control':'no-store','X-Content-Type-Options':'nos
 function json(status,value,headers={}) {
   return new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json',...SECURITY_HEADERS,...headers}});
 }
+function quotaResponse(error) {
+  if(!/Exceeded allowed .*free tier/i.test(error?.message||''))return null;
+  const reset=Math.floor(Date.now()/86400e3)*86400e3+86400e3;
+  return json(503,{error:'Cloudflare’s daily free database allowance has been reached. It resets at 8:00 AM Singapore time.'},{'Retry-After':String(Math.max(1,Math.ceil((reset-Date.now())/1000)))});
+}
 
 export default {
   async fetch(request, env) {
     const path=new URL(request.url).pathname;
     // Everything except static dashboard files goes to the single app instance.
-    if(path.startsWith('/api/')||path.startsWith('/webhooks/')||path.startsWith('/internal/')) return env.APP.get(env.APP.idFromName('main')).fetch(request);
+    if(path.startsWith('/api/')||path.startsWith('/webhooks/')||path.startsWith('/internal/')) {
+      try{return await env.APP.get(env.APP.idFromName('main')).fetch(request);}
+      catch(error){const quota=quotaResponse(error);if(quota)return quota;throw error;}
+    }
     return env.ASSETS.fetch(request);
   },
   // Watchdog: makes sure the app's 15-second work loop is scheduled, even after a deploy.
@@ -37,6 +48,9 @@ export class SocialiteApp extends DurableObject {
   constructor(ctx, env) {
     super(ctx, env);
     this.store=new Store(new DurableDatabase(ctx.storage.sql));
+    this.dashboardCache=new DashboardCache();
+    this.dashboardInstance=randomToken(12);
+    this.cloudflareUsage=new CloudflareUsage(env.CLOUDFLARE_ACCOUNT_ID,env.CLOUDFLARE_ANALYTICS_TOKEN);
     this.vault=new Vault(ctx.storage.kv);
     if(!this.vault.get('verifyToken')) this.vault.set('verifyToken',randomToken(24));
     this.huggingface=new HuggingFace(this.store,this.vault);
@@ -49,7 +63,7 @@ export class SocialiteApp extends DurableObject {
   }
   webhookUrl() { return this.env.PUBLIC_URL?this.env.PUBLIC_URL.replace(/\/+$/,'')+'/webhooks/facebook':''; }
 
-  async ensureAlarm() { if(await this.ctx.storage.getAlarm()===null) await this.ctx.storage.setAlarm(Date.now()+TICK_MS); }
+  async ensureAlarm() { return ensureWorkAlarm(this.ctx.storage); }
 
   async alarm() {
     try {
@@ -59,7 +73,7 @@ export class SocialiteApp extends DurableObject {
       if(this.live.on()) {
         if(Date.now()-(this.ctx.storage.kv.get('liveCheckAt')||0)>60000) {this.ctx.storage.kv.put('liveCheckAt',Date.now());await this.live.check();}
         const last=this.ctx.storage.kv.get('statsAt')||0;
-        if(this.facebook.configured()&&Date.now()-last>STATS_MS) {this.ctx.storage.kv.put('statsAt',Date.now());await this.facebook.verify(true).catch(()=>{});}
+        if(this.facebook.configured()&&Date.now()-last>STATS_MS) {this.ctx.storage.kv.put('statsAt',Date.now());await this.facebook.verify(true).catch(error=>console.error('Follower refresh failed:',error.message));}
       }
     } catch(error) { console.error('tick failed',error?.stack||error); this.store.log('Worker stopped this pass; check comment errors.'); }
     finally { await this.ctx.storage.setAlarm(Date.now()+TICK_MS); }
@@ -72,7 +86,7 @@ export class SocialiteApp extends DurableObject {
       const body=request.method==='POST'?Buffer.from(await request.arrayBuffer()):Buffer.alloc(0);
       if(body.length>1024*1024) return json(413,{error:'Request too large'});
       const input=()=>{try{return JSON.parse(body.toString()||'{}');}catch{return {};}};
-      if(path==='/internal/wake') {await this.ensureAlarm();return json(200,{ok:true});}
+      if(path==='/internal/wake') {const alarmAt=await this.ensureAlarm();return json(200,{ok:true,alarmAt});}
       if(path==='/internal/import') return await this.importData(request,input());
       if(path==='/internal/import-chatgpt') return await this.importChatGPT(request,input());
       if(path==='/webhooks/facebook') return await this.webhook(request,url,body);
@@ -85,12 +99,25 @@ export class SocialiteApp extends DurableObject {
       }
       const session=this.session(request);
       if(!session) return json(401,{error:'Please sign in.'});
-      if(request.method==='GET'&&path==='/api/state') return json(200,await this.state(session,url));
+      if(request.method==='GET'&&path==='/api/cloudflare')return json(200,await this.cloudflareUsage.read());
+      if(request.method==='GET'&&path==='/api/state') {
+        // SQL mutations, credentials, webhook status or a new minute invalidate the shared snapshot.
+        // The minute also expires rolling 24-hour statistics when no new comments arrive.
+        const key=JSON.stringify([this.dashboardInstance,this.store.db.revision,this.vault.revision,this.live.status,Math.floor(Date.now()/60000)]);
+        const etag='"'+sha256(key+session.csrf)+'"';
+        if(request.headers.get('if-none-match')===etag)return new Response(null,{status:304,headers:{...SECURITY_HEADERS,ETag:etag}});
+        const snapshot=await this.dashboardCache.read(key,()=>this.state({csrf:''},url));
+        return json(200,{...snapshot,csrf:session.csrf},{ETag:etag});
+      }
       if(request.method==='GET'&&path==='/api/memory') return json(200,this.workflow.memory.list(Number(url.searchParams.get('offset')||0)));
       if(request.method!=='POST') return json(404,{error:'Not found'});
       if(request.headers.get('origin')!==url.origin||request.headers.get('x-csrf-token')!==session.csrf||!request.headers.get('content-type')?.startsWith('application/json')) return json(403,{error:'Invalid request. Reload the page and try again.'});
       return json(200,await this.api(path,input(),url));
-    } catch(error) { console.error('request failed',path,error?.stack||error); return json(400,{error:error.message||'Request failed.'}); }
+    } catch(error) {
+      console.error('request failed',path,error?.stack||error);
+      const quota=quotaResponse(error);if(quota)return quota;
+      return json(400,{error:error.message||'Request failed.'});
+    }
   }
 
   // ---- Login: one owner password, stored as a PBKDF2 hash; sessions in a Secure HttpOnly cookie.
@@ -211,7 +238,7 @@ export class SocialiteApp extends DurableObject {
     if(['/api/draft','/api/approve','/api/resolve-uncertain'].includes(path))this.live.require();
     const c=store.get(input.id);
     if(!c||c.cleared_at) throw new Error('Comment not found');
-    if(path==='/api/draft') {if(!['queued','pending','error','rejected','skipped'].includes(c.status)) throw new Error('This comment cannot be drafted.');const result=await workflow.generate(c.id,input.draft,input.instructions,input.editingMode);if(result?.ok===false)throw new Error(result.error);return {ok:true,...result};}
+    if(path==='/api/draft') {if(!['queued','pending','error','rejected','skipped'].includes(c.status)) throw new Error('This comment cannot be drafted.');const result=await workflow.generate(c.id,input.draft,input.instructions,input.editingMode,true);if(result?.ok===false)throw new Error(result.error);const current=store.get(c.id);return {ok:true,...result,status:current.status,reason:current.reason};}
     if(path==='/api/approve') {await workflow.publish(c.id,input.draft);return {ok:true};}
     if(path==='/api/reject') {if(!['queued','pending','error'].includes(c.status)) throw new Error('This reply cannot be dismissed.');store.update(c.id,{status:'rejected',manual_hold:1,error:''});return {ok:true};}
     if(path==='/api/resolve-uncertain') {

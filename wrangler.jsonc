@@ -7,7 +7,7 @@
   "compatibility_flags": ["nodejs_compat"],
   "workers_dev": true,
   // Public address; the webhook is PUBLIC_URL/webhooks/facebook.
-  "vars": { "PUBLIC_URL": "https://socialite.wineandsilence.workers.dev" },
+  "vars": { "PUBLIC_URL": "https://socialite.wineandsilence.workers.dev", "CLOUDFLARE_ACCOUNT_ID": "085e65dd4910bfe4c621fe10c443ee1f" },
   // Dashboard files. Requests that are not files (/api, /webhooks) go to the Worker.
   "assets": { "directory": "./public", "binding": "ASSETS", "not_found_handling": "none" },
   // All app state (comments, settings, reply memory, secrets) lives in one SQLite-backed Durable Object.

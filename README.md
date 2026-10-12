@@ -30,6 +30,10 @@ npx wrangler tail    # live logs
 
 `.dev.vars` (local only, not deployed) holds test values for `SETUP_CODE` and `IMPORT_TOKEN`.
 
+The Cloudflare overview card reads account-wide Durable Objects database usage through the Analytics API and shares a five-minute memory cache across devices. It does not scan comment history. Its allowances are the Workers Free plan's 5 million rows read and 100,000 rows written per UTC day; change these figures if the account moves to Paid. Analytics may lag a few minutes, and failed updates are explicitly marked stale.
+
+To enable the card, create a custom API token in **My Profile → API Tokens** with **Account Analytics: Read**, restricted to the **Socialite** account. Save it securely with `npx.cmd wrangler secret put CLOUDFLARE_ANALYTICS_TOKEN`, then redeploy. Do not use an R2 storage token or the temporary Wrangler OAuth credential. Without the token, the card displays unavailable rather than inventing usage numbers.
+
 ## Secrets
 
 | Secret | Purpose |

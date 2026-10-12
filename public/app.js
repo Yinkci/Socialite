@@ -1,4 +1,6 @@
 let state, filter='new', loading=false, search='', selected=null;
+let stateETag='',pollRetryAt=0;
+let cloudflareUsage=null,cloudflareNextAt=0,cloudflareLoading=false;
 const draftEdits=new Map();
 const ideaEdits=new Map(),ideaModes=new Map();
 let memoryOffset=0,memorySignature='',memoryRequest=0;
@@ -19,7 +21,7 @@ const date=(at,seconds=false)=>new Date(at).toLocaleString(undefined,{month:'sho
 const ago=at=>{const s=Math.max(0,Math.round((Date.now()-at)/1000));return s<60?s+'s ago':s<3600?Math.round(s/60)+'m ago':s<86400?Math.round(s/3600)+'h ago':Math.round(s/86400)+'d ago';};
 // Status tone shared by list dots and the status pill: waiting on you, posted, needs attention, or quiet.
 const tone=status=>['published','simulated'].includes(status)?'sent':['pending','queued','generating','publishing'].includes(status)?'wait':['error','uncertain'].includes(status)?'warn':'quiet';
-const seenStatus=new Map(), renderedRows=new Set();
+const seenStatus=new Map(), renderedRows=new Set(), generationTabs=new Map();
 // Last markup written to the list and the conversation pane: unchanged markup is not rewritten,
 // so the 5-second refresh never resets scroll, hover or the opening animation.
 let lastRowsHtml='', lastDetailHtml='';
@@ -42,7 +44,7 @@ function nav(){const section=['queue','personality','connections','activity'].in
 
 // ---------- Inbox: list | thread | reply ----------
 function visibleRows(){
-  const rows=state.comments.filter(c=>matchesTab(c,filter)&&(!search||[c.author,c.message,c.context,c.draft].some(value=>String(value||'').toLowerCase().includes(search))));
+  const rows=state.comments.filter(c=>(matchesTab(c,filter)||(c.status==='generating'&&generationTabs.get(c.id)===filter&&!c.cleared_at))&&(!search||[c.author,c.message,c.context,c.draft].some(value=>String(value||'').toLowerCase().includes(search))));
   if(isPublishedFilter())rows.sort((a,b)=>(b.published_at||b.created_at)-(a.published_at||a.created_at));
   return rows;
 }
@@ -54,6 +56,14 @@ function renderFilters(){
   });
 }
 function renderComments() {
+  // A selected conversation stays in its current tab while AI works on it.
+  // Its real status still controls counts and approval; terminal statuses are never pinned.
+  for(const c of state.comments){
+    if(c.status!=='generating'){generationTabs.delete(c.id);continue;}
+    const previous=seenStatus.get(c.id);
+    if(!generationTabs.has(c.id)&&c.id===selected&&previous&&matchesTab({...c,status:previous},filter))generationTabs.set(c.id,filter);
+  }
+  for(const id of generationTabs.keys())if(!state.comments.some(c=>c.id===id))generationTabs.delete(id);
   renderFilters();
   const rows=visibleRows();
   const clearButton=$('#clear-comment-history');
@@ -114,7 +124,7 @@ function renderComments() {
         ${c.status==='skipped'?`<p class="note"><strong>No reply needed:</strong> ${esc(c.reason||'This comment has no clear message to respond to.')} No reply will be published. You can reassess it manually; any restored draft will wait for your approval.</p>`:''}
         ${c.status==='pending'&&c.reply_decision==='REVIEW'?'<p class="note"><strong>Meaning needs review:</strong> This reply needs your approval, including in Automatic mode.</p>':''}
         ${c.status==='rejected'?'<p class="guide">This reply was dismissed. You can generate a new reply whenever you want; it will wait for your approval.</p>':''}
-        ${c.draft?`<div class="draft">${c.status==='generating'?'<p class="guide">AI is working on your reply. The previous draft is shown until it is ready.</p>':''}${editable?'<p class="guide">Edit the reply, then approve it to publish.</p>':''}<textarea aria-label="Reply to ${esc(c.author)}" data-draft="${esc(c.id)}" data-original="${esc(c.draft)}" rows="6" maxlength="1000" ${editable?'':'readonly'}>${esc(editable?(draftEdits.get(c.id)?.text??c.draft):c.draft)}</textarea>${c.reason?`<p class="note"><strong>Review note:</strong> ${esc(c.reason)}</p>`:''}</div>`:`<p class="empty-reply">${c.status==='generating'?'AI is writing a reply. It will appear here shortly.':c.status==='queued'?(state.replyAI?.enabled?'Waiting for automatic drafting. Replies are generated one at a time.':'Connect your selected Reply AI provider to generate this reply automatically.'):'No reply has been generated for this comment.'}</p>`}
+        ${c.draft?`<div class="draft">${c.status==='generating'?'<p class="guide">AI is working on your reply. The previous draft is shown until it is ready.</p>':''}${editable?'<p class="guide">Edit the reply, then approve it to publish.</p>':''}<textarea aria-label="Reply to ${esc(c.author)}" data-draft="${esc(c.id)}" data-original="${esc(c.draft)}" rows="6" maxlength="1000" ${editable?'':'readonly'}>${esc(editable||c.status==='generating'?(draftEdits.get(c.id)?.text??c.draft):c.draft)}</textarea>${c.reason?`<p class="note"><strong>Review note:</strong> ${esc(c.reason)}</p>`:''}</div>`:`<p class="empty-reply">${c.status==='generating'?'AI is writing a reply. It will appear here shortly.':c.status==='queued'?(state.replyAI?.enabled?'Waiting for automatic drafting. Replies are generated one at a time.':'Connect your selected Reply AI provider to generate this reply automatically.'):'No reply has been generated for this comment.'}</p>`}
         ${c.error?`<p class="fault"><strong>Needs attention:</strong> ${esc(c.error)}</p>`:''}
         ${controls?`<div class="actions">${controls}</div>`:''}
         ${['queued','pending','error','rejected','skipped','generating'].includes(c.status)?`<div class="coach"><label class="coach-title" for="idea-${esc(c.id)}">Work on this reply with AI</label><p>${grammarOnly?'Paste your reply below. AI will only correct spelling, grammar, and punctuation, preserving your meaning and tone.':'Share your idea or tell the AI what to change. It will use this comment, the post, and your current draft.'}</p><label class="coach-pick">What should AI do?<select data-idea-mode="${esc(c.id)}" aria-label="AI editing mode for ${esc(c.author)}" ${c.status==='generating'?'disabled':''}><option value="improve" ${!grammarOnly?'selected':''}>Improve my idea</option><option value="grammar" ${grammarOnly?'selected':''}>Correct grammar only</option></select></label><textarea id="idea-${esc(c.id)}" data-idea="${esc(c.id)}" aria-label="Your idea for replying to ${esc(c.author)}" rows="2" maxlength="${grammarOnly?1000:2000}" placeholder="${grammarOnly?'Type the exact reply you want corrected.':'For example: Say I appreciate their support, but make it sound more personal.'}" ${c.status==='generating'?'disabled':''}>${esc(ideaEdits.get(c.id)||'')}</textarea><div class="coach-f"><span>Creates a draft for your approval.</span><button type="button" class="btn" data-action="refine" ${c.status==='generating'?'disabled':''}>${icon('spark')}${grammarOnly?'Correct grammar':'Write reply from my idea'}</button></div></div>`:''}
@@ -302,7 +312,7 @@ $('#memory-clear').onclick=()=>action($('#memory-clear'),async()=>{await api('me
 $('#memory-list').addEventListener('click',event=>{const b=event.target.closest('[data-memory-delete]');if(b)action(b,async()=>{await api('memory/delete',{id:b.dataset.memoryDelete});memorySignature='';},'Example forgotten.');});
 $('#memory-prev').onclick=()=>{memoryOffset=Math.max(0,memoryOffset-20);renderMemory();};
 $('#memory-next').onclick=()=>{memoryOffset+=20;renderMemory();};
-async function refresh(initial=false){if(loading)return;loading=true;try{state=await fetch('/api/state').catch(()=>{throw new Error('Cannot reach Socialite. Check your internet connection.');}).then(r=>{if(r.status===401){location.replace('/login');throw new Error('Please sign in.');}if(!r.ok)throw new Error('Cannot load dashboard');return r.json();});render();if(initial){for(const [id,key] of [['personality-input','personality'],['knowledge-input','knowledge'],['examples-input','examples'],['reply-policy-input','replyPolicy'],['mode-input','mode'],['interval-input','intervalSeconds'],['comment-delay-input','commentDelaySeconds'],['posts-input','postIds'],['page-input','pageId'],['version-input','graphVersion']])$('#'+id).value=key==='replyPolicy'&&state.settings.replyPolicyPageId!==state.settings.pageId?'':state.settings[key]??'';$('#skip-emoji-input').checked=state.settings.replyPolicyPageId===state.settings.pageId&&!!state.settings.skipEmojiOnly;fillReplyAI();toTop();}}finally{loading=false;}}
+async function refresh(initial=false){if(loading)return;loading=true;try{const response=await fetch('/api/state',{headers:stateETag?{'If-None-Match':stateETag}:{}}).catch(()=>{pollRetryAt=Date.now()+60000;throw new Error('Cannot reach Socialite. Check your internet connection.');});if(response.status===401){location.replace('/login');throw new Error('Please sign in.');}if(response.status===304){pollRetryAt=0;return;}if(!response.ok){const retry=Number(response.headers?.get('Retry-After'));pollRetryAt=Date.now()+(retry>0?retry*1000:60000);const error=await response.json().catch(()=>({}));throw new Error(error.error||'Cannot load dashboard');}state=await response.json();stateETag=response.headers?.get('ETag')||'';pollRetryAt=0;render();if(initial){for(const [id,key] of [['personality-input','personality'],['knowledge-input','knowledge'],['examples-input','examples'],['reply-policy-input','replyPolicy'],['mode-input','mode'],['interval-input','intervalSeconds'],['comment-delay-input','commentDelaySeconds'],['posts-input','postIds'],['page-input','pageId'],['version-input','graphVersion']])$('#'+id).value=key==='replyPolicy'&&state.settings.replyPolicyPageId!==state.settings.pageId?'':state.settings[key]??'';$('#skip-emoji-input').checked=state.settings.replyPolicyPageId===state.settings.pageId&&!!state.settings.skipEmojiOnly;fillReplyAI();toTop();}}finally{loading=false;}}
 // After the first load draws, undo the browser's jump to the #screen anchor so the Page header stays in view.
 function toTop(){window.scrollTo?.(0,0);window.requestAnimationFrame?.(()=>window.scrollTo?.(0,0));setTimeout(()=>window.scrollTo?.(0,0),300);}
 
@@ -322,13 +332,23 @@ $('#comments').addEventListener('click',event=>{
   const id=card.dataset.comment,kind=button.dataset.action;
   disarm();
   action(button,async()=>{
+    let result;
     if(kind.startsWith('resolve-'))await api('resolve-uncertain',{id,status:kind.slice(8)});
-    else if(kind==='refine'){const instructions=card.querySelector('[data-idea]').value.trim();if(!instructions)throw new Error('Write your idea or instructions first.');await api('draft',{id,draft:card.querySelector('[data-draft]')?.value,instructions,editingMode:ideaModes.get(id)||'improve'});}
-    else await api(kind,{id,draft:card.querySelector('[data-draft]')?.value});
+    else if(kind==='refine'){const instructions=card.querySelector('[data-idea]').value.trim();if(!instructions)throw new Error('Write your idea or instructions first.');result=await api('draft',{id,draft:card.querySelector('[data-draft]')?.value,instructions,editingMode:ideaModes.get(id)||'improve'});}
+    else result=await api(kind,{id,draft:card.querySelector('[data-draft]')?.value});
     draftEdits.delete(id);
     const editor=[...document.querySelectorAll('textarea[data-draft]')].find(t=>t.dataset.draft===id);
     if(editor)editor.value=editor.dataset.original;
-  },kind==='approve'?'Reply handled. Check its status in the inbox.':['draft','refine'].includes(kind)?'Drafting finished. Check the comment for its reply or error.':'Comment updated.');
+    if(['draft','refine'].includes(kind)){
+      await refresh();
+      const current=state.comments.find(c=>c.id===id);
+      if(current?.status==='pending'){
+        search='';$('#comment-search').value='';setFilter('pending');selectComment(id,{open:true,scroll:false});
+        notice('Draft ready for your approval.');
+      }else if(result?.skipped||current?.status==='skipped')notice('No reply generated: '+(result?.reason||current?.reason||'The AI could not find a meaningful response.'),true);
+      else if(current?.error)notice(current.error,true);
+    }
+  },kind==='approve'?'Reply handled. Check its status in the inbox.':['draft','refine'].includes(kind)?'':'Comment updated.');
 });
 function setFilter(key){
   filter=key;
@@ -384,6 +404,7 @@ function approveSelected(){
   armTimer=setTimeout(disarm,2000);
 }
 document.addEventListener('keydown',event=>{
+  if($('#cloudflare-dialog').open)return;
   if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();openPalette();return;}
   if(event.key==='Escape'){if(!$('#palette').hidden)return closePalette();if(!$('#test-form').hidden)return hideTest();disarm();return;}
   if(!$('#palette').hidden||typing(event.target)||event.ctrlKey||event.metaKey||event.altKey)return;
@@ -470,4 +491,32 @@ $('#connect-webhook').onclick=()=>setLive(!(state.live?.on));
 $('#copy-webhook').onclick=()=>action($('#copy-webhook'),()=>navigator.clipboard.writeText($('#webhook-address').value),'Webhook address copied.');
 $('#password-form').onsubmit=event=>{event.preventDefault();action(event.submitter,async()=>{await api('password',Object.fromEntries(new FormData(event.target)));location.replace('/login');});};
 $('#sign-out').onclick=async()=>{await fetch('/api/logout',{method:'POST'}).catch(()=>{});location.replace('/login');};
-setInterval(()=>refresh().catch(error=>notice(error.message,true)),5000);
+function renderCloudflare(){
+  const u=cloudflareUsage,available=!!u?.available,percent=(n,limit)=>(100*n/limit).toFixed(1)+'%';
+  const peak=available?Math.max(u.reads/u.readLimit,u.writes/u.writeLimit):0;
+  $('#cf-status').textContent=!u?'Loading':!available?'Unavailable':u.stale?'Stale':peak>=1?'Limit reached':peak>=.8?'Near limit':'Healthy';
+  $('#cf-status').dataset.level=!available||u.stale?'quiet':peak>=1?'error':peak>=.8?'warn':'ok';
+  $('#cf-reads').textContent=available?percent(u.reads,u.readLimit):'—';
+  $('#cf-writes').textContent=available?percent(u.writes,u.writeLimit):'—';
+  const reset=u?.resetAt;
+  $('#cf-reset').textContent='Resets at 8 AM SGT';
+  $('#cf-details').innerHTML=available?[['Rows read',u.reads,u.readLimit],['Rows written',u.writes,u.writeLimit]].map(([label,n,limit])=>`<div class="cf-detail"><div class="cf-row"><span>${label}</span><strong class="mono">${percent(n,limit)}</strong></div><progress max="${limit}" value="${Math.min(n,limit)}" aria-label="${label} daily allowance"></progress><small class="mono">${n.toLocaleString()} / ${limit.toLocaleString()} · ${Math.max(0,limit-n).toLocaleString()} remaining</small></div>`).join(''):`<p class="hint">${esc(u?.error||'Loading usage…')}</p>`;
+  $('#cf-updated').textContent=(available?(u.stale?'Last successful update: ':'Updated: ')+new Date(u.updatedAt).toLocaleString()+'. ':'')+(reset?'Next reset: '+new Date(reset).toLocaleString('en-SG',{timeZone:'Asia/Singapore',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'})+' SGT. ':'')+'Usage refreshes every 5 minutes.';
+  $('#open-cloudflare').title=available?`Daily account usage: reads ${u.reads.toLocaleString()}, writes ${u.writes.toLocaleString()}. Click for limits and remaining allowance.`:(u?.error||'Loading Cloudflare usage.');
+}
+async function refreshCloudflare(){
+  if(!state||document.hidden||cloudflareLoading||Date.now()<cloudflareNextAt)return;
+  cloudflareLoading=true;cloudflareNextAt=Date.now()+300000;
+  try{
+    const response=await fetch('/api/cloudflare');if(!response.ok)throw Error('Cloudflare usage is temporarily unavailable.');
+    cloudflareUsage=await response.json();
+  }catch(error){cloudflareUsage=cloudflareUsage?.available?{...cloudflareUsage,stale:true}:{available:false,error:error.message};}
+  finally{cloudflareLoading=false;renderCloudflare();}
+}
+$('#open-cloudflare').onclick=()=>{$('#cloudflare-dialog').showModal();renderCloudflare();refreshCloudflare();};
+$('#close-cloudflare').onclick=()=>$('#cloudflare-dialog').close();
+$('#cloudflare-dialog').addEventListener('close',()=>$('#open-cloudflare').focus());
+async function pollDashboard(){if(document.hidden||Date.now()<pollRetryAt)return;await refresh().catch(error=>notice(error.message,true));if(Date.now()>=pollRetryAt)await refreshCloudflare();}
+setInterval(pollDashboard,5000);
+document.addEventListener('visibilitychange',()=>{if(!document.hidden)pollDashboard();});
+refreshCloudflare();

@@ -38,11 +38,15 @@
     <button id="open-test" type="button"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10"/></svg><span>Playground</span></button>
   </nav>
 
+  <div class="sidebar-cards">
   <section class="health" aria-label="Connected accounts">
     <h2 class="label">Connections</h2>
     <a class="chip" href="#connections"><span id="rail-fb-dot" class="dot" aria-hidden="true"></span><span class="chip-body"><strong>Facebook</strong><span id="rail-fb-status">Not configured</span><span id="rail-fb-followers" class="chip-sub mono" hidden></span><span id="rail-fb-updated" class="chip-sub mono" hidden></span></span></a>
     <a class="chip" href="#connections"><span id="rail-ai-dot" class="dot" aria-hidden="true"></span><span class="chip-body"><strong id="rail-ai-name">Hugging Face</strong><span id="rail-ai-status">Not connected</span></span></a>
   </section>
+
+  <a class="publishing-side" href="#personality" aria-label="Change publishing mode"><span class="label">Publishing</span><strong id="mode-label">Approval required</strong><span class="publishing-change">Change</span></a>
+  </div>
 
   <button type="button" id="open-palette" class="palette-btn"><span>Command</span><kbd class="mono">Ctrl K</kbd></button>
   <p id="header-date" class="side-date mono"></p>
@@ -86,7 +90,7 @@
       <button data-filter="pending" aria-pressed="false" type="button" class="kpi kpi-go"><span class="kpi-label">Awaiting approval</span><strong id="stat-pending" class="kpi-n mono">0</strong><span id="delta-pending" class="kpi-delta mono"></span><svg id="spark-pending" class="spark" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
       <button data-filter="published" aria-pressed="false" type="button" class="kpi kpi-go"><span class="kpi-label">Published replies</span><strong id="stat-published" class="kpi-n mono">0</strong><span id="delta-published" class="kpi-delta mono"></span><svg id="spark-published" class="spark spark-ok" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
       <button data-filter="automatic" aria-pressed="false" type="button" class="kpi kpi-go kpi-auto"><span class="kpi-label">Automatically published</span><strong id="stat-auto" class="kpi-n mono">0</strong><span id="delta-auto" class="kpi-delta mono"></span><svg id="spark-auto" class="spark spark-ok" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
-      <div class="kpi kpi-mode"><span class="kpi-label">Publishing</span><strong id="mode-label">Approval required</strong><a href="#personality" class="kpi-link">Change</a></div>
+      <button type="button" id="open-cloudflare" class="kpi kpi-cloudflare" aria-haspopup="dialog" aria-controls="cloudflare-dialog"><span class="cf-head"><span>Cloudflare</span><span id="cf-status" class="cf-status">Loading</span></span><span class="cf-row"><span>Reads</span><strong id="cf-reads" class="mono">—</strong></span><span class="cf-row"><span>Writes</span><strong id="cf-writes" class="mono">—</strong></span><span id="cf-reset" class="cf-reset mono">Resets at 8 AM SGT</span></button>
     </div>
 
     <form id="test-form" class="drawer" hidden aria-labelledby="test-title">
@@ -228,6 +232,13 @@
   </section>
 </main>
 </div>
+
+<dialog id="cloudflare-dialog" class="cf-dialog" aria-labelledby="cf-title">
+  <div class="drawer-head"><h2 id="cf-title">Cloudflare usage</h2><button type="button" id="close-cloudflare" class="btn btn-ghost">Close <kbd>Esc</kbd></button></div>
+  <p class="hint">Daily database allowance for the Socialite Cloudflare account. Figures may take a few minutes to appear.</p>
+  <div id="cf-details" class="cf-details"></div>
+  <p id="cf-updated" class="hint"></p>
+</dialog>
 
 <div id="palette" class="palette" hidden>
   <div class="palette-box" role="dialog" aria-modal="true" aria-label="Command palette">

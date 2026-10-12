@@ -27,7 +27,7 @@ export class Workflow {
     const settings=this.store.settings();if(!settings.learningEnabled)return [];
     return this.store.db.prepare("SELECT draft FROM comments WHERE source='facebook' AND page_id=? AND status='published' AND id<>? AND draft<>'' ORDER BY COALESCE(NULLIF(published_at,0),updated_at) DESC LIMIT 6").all(settings.pageId,c.id).map(r=>r.draft);
   }
-  async generate(id, previousDraft, ownerInstructions, editingMode='improve') {
+  async generate(id, previousDraft, ownerInstructions, editingMode='improve', manualRequest=false) {
     const c=this.store.get(id);
     if(c?.cleared_at)throw new Error('This conversation was cleared.');
     if(!c)return;
@@ -39,7 +39,7 @@ export class Workflow {
     const direction=ownerInstructions?.trim()||'', grammarOnly=editingMode==='grammar';
     if(grammarOnly&&(!direction||direction.length>1000))throw new Error('Text for grammar correction must contain 1-1000 characters.');
     if(!this.store.claim(id,c.status,'generating'))return;
-    if(['rejected','skipped'].includes(c.status)||direction)this.store.update(id,{manual_hold:1});
+    if(manualRequest||['rejected','skipped'].includes(c.status)||direction)this.store.update(id,{manual_hold:1});
     try {
       if(c.source==='facebook') {
         const latest=await this.facebook.current(c);
@@ -48,14 +48,14 @@ export class Workflow {
         this.store.update(id,{message:c.message,context:c.context});
         if(!c.message.trim()) throw new Error('Comment has no text to reply to.');
       }
-      const policyReason=!grammarOnly&&!direction?policySkipReason(this.store.settings(),c):'';
+      const policyReason=!manualRequest&&!grammarOnly&&!direction?policySkipReason(this.store.settings(),c):'';
       if(policyReason)return this.skipComment(this.store.get(id),policyReason);
       let history=[];try{history=JSON.parse(c.draft_history||'[]');}catch{}
       history=[...new Set([...(Array.isArray(history)?history.filter(x=>typeof x==='string'&&x.length<=1000):[]),c.draft,previousDraft].filter(Boolean))].slice(-8);
       const previousReplies=history.map(replyKey);
       let result;
       for(let attempt=1;attempt<=(!grammarOnly&&history.length?2:1);attempt++){
-        result=await this.chatgpt.generate(this.store.settings(),{...c,previousReplies:grammarOnly?[]:history,regenerationAttempt:attempt,ownerInstructions:direction,currentReply:previousDraft??c.draft,grammarOnly,replyMemory:grammarOnly?null:this.memory.forDraft(c),recentPageReplies:grammarOnly?[]:this.recentPageReplies(c)});
+        result=await this.chatgpt.generate(this.store.settings(),{...c,manualRequest,previousReplies:grammarOnly?[]:history,regenerationAttempt:attempt,ownerInstructions:direction,currentReply:previousDraft??c.draft,grammarOnly,replyMemory:grammarOnly?null:this.memory.forDraft(c),recentPageReplies:grammarOnly?[]:this.recentPageReplies(c)});
         result.reply=withoutEmDashes(result.reply);
         const current=this.store.get(id);
         if(current.status!=='generating'||current.message!==c.message)return;

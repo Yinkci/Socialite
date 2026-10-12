@@ -5,6 +5,40 @@ import { DurableDatabase, Vault } from '../src/db.js';
 import { Store } from '../src/store.js';
 import { ReplyMemory } from '../src/memory.js';
 import { hashPassword, verifyPassword, randomToken, sha256 } from '../src/auth.js';
+import { DashboardCache } from '../src/dashboard-cache.js';
+import { ensureWorkAlarm } from '../src/alarm.js';
+
+test('background watchdog repairs alarms stranded by an outage and preserves active alarms',async()=>{
+  const now=1000000;let at=null,writes=0;
+  const storage={getAlarm:async()=>at,setAlarm:async value=>{at=value;writes++;}};
+  assert.equal(await ensureWorkAlarm(storage,now),now+15000);assert.equal(writes,1);
+  await ensureWorkAlarm(storage,now);assert.equal(writes,1,'future alarm is preserved');
+  at=now-60000;await ensureWorkAlarm(storage,now);assert.equal(writes,1,'recent/running alarm is preserved');
+  at=now-3600000;assert.equal(await ensureWorkAlarm(storage,now),now+15000);assert.equal(writes,2,'stranded alarm gets a fresh schedule');
+});
+
+test('dashboard snapshots are shared across tabs, refreshed on change and retried after failure',async()=>{
+  const cache=new DashboardCache();let loads=0;
+  const load=async()=>({total:++loads});
+  const [a,b]=await Promise.all([cache.read('revision1-minute1',load),cache.read('revision1-minute1',load)]);
+  assert.equal(loads,1);assert.equal(a,b);
+  await cache.read('revision1-minute1',load);assert.equal(loads,1);
+  assert.equal((await cache.read('revision2-minute1',load)).total,2);
+  assert.equal((await cache.read('revision2-minute2',load)).total,3,'rolling statistics expire each minute');
+  await assert.rejects(cache.read('failed',async()=>{throw Error('temporary failure');}));
+  assert.equal((await cache.read('failed',load)).total,4,'failed snapshots never stick');
+});
+
+test('SQL revision tracks real changes and cached settings do not survive writes',()=>{
+  const sql=fakeSql();let reads=0;
+  const db=new DurableDatabase({exec(query,...args){if(query==='SELECT value FROM settings WHERE id=1')reads++;return sql.exec(query,...args);}});
+  const store=new Store(db),revision=db.revision;
+  store.settings();const firstReads=reads;store.settings();assert.equal(reads,firstReads,'repeated settings reads use memory');
+  store.saveSettings({...store.settings(),pageId:'456'});
+  assert.ok(db.revision>revision);assert.equal(store.settings().pageId,'456');assert.equal(reads,firstReads+1);
+  const before=db.revision;db.prepare('UPDATE comments SET status=? WHERE id=?').run('pending','missing');assert.equal(db.revision,before,'no-op writes do not invalidate dashboard');
+  db.exec("INSERT INTO activity(at,message) VALUES(0,'imported')");assert.ok(db.revision>before,'bulk imports invalidate dashboard');
+});
 
 // Mimics ctx.storage.sql: exec(query,...bindings) returns a cursor with toArray()/one().
 function fakeSql() {

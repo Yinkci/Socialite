@@ -10,11 +10,23 @@ async function setup(t,comments=[]) {
   const data={csrf:'test-csrf',settings:{personality:'Warm and helpful',knowledge:'Our FAQs',examples:'Thanks!',model:'',mode:'approval',aiProvider:'huggingface',hfSpace:'owner/space',pageId:'123',graphVersion:'v26.0',postIds:'',intervalSeconds:30},replyAI:{provider:'huggingface',enabled:true},huggingface:{hasToken:true},live:{on:true,receiving:true},facebook:{configured:true,hasAppSecret:true,verifyToken:'test-verify'},webhookUrl:'https://socialite.example.workers.dev/webhooks/facebook',memory:{enabled:true,total:0,counts:{},summary:null,revision:'0'},comments,activity:[{at:Date.now(),message:'Draft ready for Alex.'}]};
   const dom=new JSDOM(html,{url:'http://127.0.0.1:8787',runScripts:'outside-only'});
   const w=dom.window, calls=[];
+  Object.defineProperty(w.document,'hidden',{value:false,configurable:true});
+  w.__stateRequests=[];
+  w.__cloudflareRequests=0;
+  w.__cloudflareUsage={available:true,reads:170113,writes:656,readLimit:5000000,writeLimit:100000,updatedAt:Date.now(),resetAt:Math.floor(Date.now()/86400e3)*86400e3+86400e3};
+  w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
+  w.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new w.Event('close'));};
   w.setInterval=fn=>{w.__poll=fn;};
   w.HTMLElement.prototype.scrollIntoView=()=>{};
   w.fetch=async(path,options)=>{
+    if(path==='/api/cloudflare'){w.__cloudflareRequests++;return {ok:true,json:async()=>structuredClone(w.__cloudflareUsage)};}
     if(path.startsWith('/api/memory?')){const offset=Number(new URL(path,'http://127.0.0.1:8787').searchParams.get('offset'));const rows=w.__memoryRows||[];return {ok:true,json:async()=>({offset,total:rows.length,rows:rows.slice(offset,offset+20)})};}
-    if(path==='/api/state') return {ok:true,json:async()=>structuredClone(data)};
+    if(path==='/api/state'){
+      const etag=JSON.stringify(data);
+      w.__stateRequests.push(options?.headers?.['If-None-Match']||'');
+      if(options?.headers?.['If-None-Match']===etag)return {status:304,ok:false};
+      return {status:200,ok:true,headers:{get:name=>name==='ETag'?etag:null},json:async()=>structuredClone(data)};
+    }
     const input=JSON.parse(options.body);calls.push({path,input});
     if(path==='/api/chatgpt/check')return {ok:true,json:async()=>({models:[{id:'gpt-6-sol',name:'GPT 6 Sol'},{id:'gpt-6-luna',name:'GPT 6 Luna'}]})};
     if(path==='/api/settings')Object.assign(data.settings,input);
@@ -22,7 +34,7 @@ async function setup(t,comments=[]) {
     if(path==='/api/memory/delete'){w.__memoryRows=w.__memoryRows.filter(r=>r.comment_id!==input.id);data.memory.total=w.__memoryRows.length;data.memory.revision+='x';}
     if(path==='/api/memory/clear'){w.__memoryRows=[];data.memory.total=0;data.memory.revision+='x';}
     if(path==='/api/approve'){const c=data.comments.find(c=>c.id===input.id);c.status='published';c.reaction_applied='LIKE';c.reaction_status='applied';}
-    if(path==='/api/draft'){const c=data.comments.find(c=>c.id===input.id);c.status='generating';if(w.__draftGate)await w.__draftGate;c.draft='A fresh generated reply.';c.status='pending';}
+    if(path==='/api/draft'){const c=data.comments.find(c=>c.id===input.id);c.status='generating';if(w.__draftGate)await w.__draftGate;c.draft='A fresh generated reply.';c.status='pending';return {ok:true,json:async()=>({ok:true,status:c.status,reason:''})};}
     if(path==='/api/comments/clear'){const removed=data.comments.filter(c=>c.status===input.status).length;data.comments=data.comments.filter(c=>c.status!==input.status);return {ok:true,json:async()=>({ok:true,cleared:removed})};}
     if(path==='/api/reject'){data.comments.find(c=>c.id===input.id).status='rejected';}
     return {ok:true,json:async()=>({ok:true})};
@@ -32,6 +44,66 @@ async function setup(t,comments=[]) {
   return {w,data,calls,$:s=>w.document.querySelector(s),input:(element,value)=>{element.value=value;element.dispatchEvent(new w.Event('input',{bubbles:true}));}};
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('Cloudflare overview shows real percentages and Publishing lives in the sidebar',async t=>{
+  const s=await setup(t);await s.w.__poll();
+  assert.ok(s.$('aside #mode-label'));assert.equal(s.$('.kpis #mode-label'),null);
+  assert.equal(s.$('#cf-reads').textContent,'3.4%');assert.equal(s.$('#cf-writes').textContent,'0.7%');
+  assert.equal(s.$('#cf-status').textContent,'Healthy');
+  const requests=s.w.__cloudflareRequests;await s.w.__poll();assert.equal(s.w.__cloudflareRequests,requests,'frequent dashboard checks do not fetch analytics again');
+  s.$('#open-cloudflare').click();assert.equal(s.$('#cloudflare-dialog').open,true);assert.match(s.$('#cf-details').textContent,/170,113 \/ 5,000,000/);
+  s.$('#close-cloudflare').click();assert.equal(s.w.document.activeElement,s.$('#open-cloudflare'));
+});
+
+test('Cloudflare warns near the limit and explicitly labels stale or unavailable usage',async t=>{
+  const s=await setup(t);let now=s.w.Date.now();s.w.Date.now=()=>now;
+  s.w.__cloudflareUsage.reads=4500000;await s.w.__poll();assert.equal(s.$('#cf-status').textContent,'Near limit');
+  now+=300001;s.w.__cloudflareUsage.stale=true;await s.w.__poll();assert.equal(s.$('#cf-status').textContent,'Stale');
+  now+=300001;s.w.__cloudflareUsage={available:false,error:'Cloudflare analytics is not connected.'};await s.w.__poll();
+  assert.equal(s.$('#cf-status').textContent,'Unavailable');assert.equal(s.$('#cf-reads').textContent,'—');assert.match(s.$('#cf-details').textContent,/not connected/);
+});
+
+test('manual generation from No reply needed opens the new draft in Awaiting approval',async t=>{
+  const s=await setup(t,[comment('playground','skipped',{source:'test',draft:'',reason:'Simple agreement with the post.'})]);
+  s.$('[data-filter="skipped"]').click();
+  assert.equal(s.$('[data-draft]'),null);
+  s.$('[data-action="draft"]').click();await settle();await settle();
+  assert.equal(s.$('[data-filter="pending"]').getAttribute('aria-pressed'),'true');
+  assert.equal(s.$('[data-comment]').dataset.comment,'playground');
+  assert.equal(s.$('[data-draft="playground"]').value,'A fresh generated reply.');
+  assert.ok(s.$('[data-action="approve"]'));
+  assert.match(s.$('#notice').textContent,/Draft ready for your approval/);
+});
+
+test('unchanged polling uses conditional requests and preserves the conversation DOM',async t=>{
+  const s=await setup(t,[comment('one')]),panel=s.$('.convo');
+  await s.w.__poll();
+  assert.ok(s.w.__stateRequests.at(-1),'sends the previous ETag');
+  assert.equal(s.$('.convo'),panel,'304 does not rebuild the conversation');
+  s.data.comments[0].draft='Changed in the background';await s.w.__poll();
+  assert.equal(s.$('[data-draft="one"]').value,'Changed in the background');
+});
+
+test('hidden tabs stop polling and resume with current data when visible',async t=>{
+  const s=await setup(t,[comment('one')]);let hidden=true;
+  Object.defineProperty(s.w.document,'hidden',{get:()=>hidden});
+  const before=s.w.__stateRequests.length;
+  s.data.comments[0].draft='Ready while tab was hidden';
+  await s.w.__poll();assert.equal(s.w.__stateRequests.length,before);
+  hidden=false;s.w.document.dispatchEvent(new s.w.Event('visibilitychange'));await settle();
+  assert.equal(s.w.__stateRequests.length,before+1);
+  assert.equal(s.$('[data-draft="one"]').value,'Ready while tab was hidden');
+});
+
+test('database-limit responses show their explanation and suspend polling until Retry-After',async t=>{
+  const s=await setup(t);const originalFetch=s.w.fetch,now=s.w.Date.now();let requests=0;
+  s.w.fetch=async()=>{requests++;return {status:503,ok:false,headers:{get:()=>120},json:async()=>({error:'Daily database allowance reached.'})};};
+  await s.w.__poll();assert.equal(requests,1);
+  assert.match(s.w.document.body.textContent,/Daily database allowance reached/);
+  await s.w.__poll();assert.equal(requests,1,'no repeated requests during outage');
+  s.w.Date.now=()=>now+121000;s.w.fetch=async(...args)=>{if(args[0]==='/api/state')requests++;return originalFetch(...args);};
+  await s.w.__poll();assert.equal(requests,2,'automatically retries when allowed');
+});
 test('sidebar test-comment action opens the form from Activity and returns focus on close',async t=>{
   const s=await setup(t);
   assert.ok(s.$('aside #open-test'));
@@ -170,6 +242,25 @@ test('polling during regeneration cannot restore an old edited reply over the ne
   await s.w.__poll();await settle();release();await settle();
   assert.equal(s.calls[0].input.draft,'Old edited wording');assert.equal(s.$('[data-draft="one"]').value,'A fresh generated reply.');
   await s.w.__poll();await settle();assert.equal(s.$('[data-draft="one"]').value,'A fresh generated reply.');
+});
+
+test('Awaiting approval keeps the selected conversation visible through multiple regeneration polls',async t=>{
+  const s=await setup(t,[comment('one'),comment('two')]);let release;s.w.__draftGate=new Promise(r=>{release=r;});
+  s.$('[data-filter="pending"]').click();s.$('[data-row="one"]').click();
+  s.input(s.$('[data-draft="one"]'),'My edited reply before regeneration');
+  s.input(s.$('[data-idea="one"]'),'Make it more personal');s.$('[data-action="refine"]').click();
+  for(let i=0;i<2;i++){
+    await s.w.__poll();await settle();
+    assert.ok(s.$('[data-row="one"]'),'regenerating row stays in its current tab');
+    assert.equal(s.$('[data-row="one"]').getAttribute('aria-selected'),'true','selection does not jump to another comment');
+    assert.equal(s.$('[data-draft="one"]').value,'My edited reply before regeneration');
+    assert.equal(s.$('[data-draft="one"]').readOnly,true);
+    assert.match(s.$('[data-comment="one"]').textContent,/AI is working/);
+    assert.equal(s.$('[data-comment="one"] [data-action="approve"]'),null,'cannot approve an in-flight draft');
+  }
+  release();await settle();await settle();
+  assert.equal(s.$('[data-draft="one"]').value,'A fresh generated reply.');
+  assert.equal(s.$('[data-draft="one"]').readOnly,false);assert.ok(s.$('[data-comment="one"] [data-action="approve"]'));
 });
 
 test('a new server draft supersedes a cached edit of the previous draft',async t=>{

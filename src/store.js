@@ -24,6 +24,17 @@ export class Store {
     for(const col of ["post_url TEXT DEFAULT ''","post_image TEXT DEFAULT ''","post_loaded INTEGER DEFAULT 0","reaction_choice TEXT DEFAULT 'NONE'","reaction_selected INTEGER DEFAULT 0","reaction_status TEXT DEFAULT 'pending'","reaction_applied TEXT DEFAULT 'NONE'","reaction_error TEXT DEFAULT ''","manual_hold INTEGER DEFAULT 0","page_id TEXT DEFAULT ''","draft_history TEXT DEFAULT '[]'","publish_kind TEXT DEFAULT ''","published_at INTEGER DEFAULT 0","pending_at INTEGER DEFAULT 0","attention_at INTEGER DEFAULT 0","cleared_at INTEGER DEFAULT 0","like_after_publish INTEGER DEFAULT 0","reply_decision TEXT DEFAULT 'REVIEW'"]) {
       try { this.db.exec(`ALTER TABLE comments ADD COLUMN ${col}`); } catch { /* already exists */ }
     }
+    // Background work must seek active rows rather than scan the growing published history.
+    this.db.exec(`
+      CREATE INDEX IF NOT EXISTS comments_active_status ON comments(cleared_at,status,created_at);
+      CREATE INDEX IF NOT EXISTS comments_visible_created ON comments(cleared_at,created_at DESC);
+      CREATE INDEX IF NOT EXISTS comments_status ON comments(status);
+      CREATE INDEX IF NOT EXISTS comments_like_queue ON comments(cleared_at,status) WHERE like_after_publish=1;
+      CREATE INDEX IF NOT EXISTS comments_post_queue ON comments(created_at DESC) WHERE source='facebook' AND cleared_at=0 AND post_loaded=0 AND post_id<>'' AND status NOT IN ('removed','rejected','skipped');
+      CREATE INDEX IF NOT EXISTS comments_received ON comments(source,created_at);
+      CREATE INDEX IF NOT EXISTS comments_pending_time ON comments(source,pending_at);
+      CREATE INDEX IF NOT EXISTS comments_published_time ON comments(source,status,published_at,updated_at);
+    `);
     for(const c of this.db.prepare("SELECT id,draft FROM comments WHERE status IN ('queued','pending','error','rejected') AND instr(draft,?)>0").all('\u2014')) {
       this.db.prepare('UPDATE comments SET draft=? WHERE id=?').run(withoutEmDashes(c.draft),c.id);
     }
