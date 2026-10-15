@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /api/
+Disallow: /internal/
+Disallow: /webhooks/
+
+Sitemap: https://socialite.wineandsilence.workers.dev/sitemap.xml

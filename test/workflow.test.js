@@ -8,6 +8,28 @@ import { openStore } from './helpers.js';
 import { Facebook, validSignature } from '../src/facebook.js';
 import { Workflow } from '../src/workflow.js';
 import { buildPrompt } from '../src/prompt.js';
+import { WINE_AND_SILENCE_PERSONALITY } from '../src/personality-presets.js';
+
+test('Wine and Silence regeneration uses the full supplied personality for this draft and stays held',async t=>{
+  const s=setup(t);add(s.store,'preset','test');
+  s.store.saveSettings({...s.store.settings(),personality:'My saved personality',knowledge:'Approved facts',mode:'automatic'});
+  s.store.update('preset',{status:'pending',draft:'The old reply.'});let received;
+  s.ai.generate=async(settings,c)=>{received={settings,c};return {reply:'Some memories stay with us even as places change. 🤍',reply_decision:'REPLY',needs_review:false};};
+  await s.workflow.generate('preset','My edited draft.',undefined,'improve',true,'wine-and-silence');
+  assert.equal(received.settings.personality,WINE_AND_SILENCE_PERSONALITY);assert.equal(received.settings.knowledge,'Approved facts');
+  assert.equal(received.c.personalityPreset,'wine-and-silence');assert.ok(received.c.previousReplies.includes('My edited draft.'));
+  const prompt=buildPrompt(received.settings,received.c).instructions;
+  assert.match(prompt,/“It did make me stronger.”/);assert.match(prompt,/at most one emoji/);assert.match(prompt,/take precedence over conflicting generic tone examples/);
+  assert.equal(s.store.settings().personality,'My saved personality');assert.equal(s.store.get('preset').status,'pending');assert.equal(s.store.get('preset').manual_hold,1);assert.equal(s.store.get('preset').review,1);
+  await s.workflow.tick();assert.equal(s.posted(),0);
+});
+
+test('unknown or automatic personality requests are rejected before claiming the comment',async t=>{
+  const s=setup(t);add(s.store);let calls=0;s.ai.generate=async()=>{calls++;};
+  await assert.rejects(s.workflow.generate('comment-1',undefined,undefined,'improve',true,'unknown'),/Unknown reply personality/);
+  await assert.rejects(s.workflow.generate('comment-1',undefined,undefined,'improve',false,'wine-and-silence'),/manual reply generation/);
+  assert.equal(s.store.get('comment-1').status,'queued');assert.equal(calls,0);
+});
 
 test('automatic agreement stays skipped but an explicit manual request produces a held draft',async t=>{
   for(const source of ['test','facebook']){
@@ -50,6 +72,51 @@ function setup(t) {
 }
 function add(store,id='comment-1',source='facebook') {store.add({id,post_id:'123_456',message:'Love it!',author:'Alex',context:'New launch',source});}
 function payload(value,entry='123') {return {object:'page',entry:[{id:entry,changes:[{field:'feed',value:{item:'comment',verb:'add',comment_id:'comment-1',post_id:'123_456',parent_id:'123_456',message:'Hello',from:{id:'999',name:'Alex'},...value}}]}]};}
+
+test('all single-word comments skip before AI in every mode, with emojis excluded from the count',async t=>{
+  for(const mode of ['approval','hybrid','automatic'])for(const source of ['facebook','test']){
+    const s=setup(t);s.store.saveSettings({...s.store.settings(),mode,skipEmojiOnly:false});let calls=0,likes=0;
+    s.ai.generate=async()=>{calls++;return {reply:'A long enough reply.',reply_decision:'REPLY',needs_review:false};};s.facebook.like=async()=>likes++;
+    for(const [i,message] of ['Amen 😳','Beautiful','Thanks👍🏽','1️⃣ Amen 2️⃣','🙏 Agree ❤️'].entries()){
+      const id='single-'+i;add(s.store,id,source);s.store.update(id,{message});
+    }
+    await s.workflow.tick();
+    for(const c of s.store.list()){assert.equal(c.status,'skipped');assert.equal(c.reply_decision,'SKIP');assert.equal(c.draft,'');assert.match(c.reason,/Single-word comment/);}
+    assert.equal(calls,0);assert.equal(likes,0);assert.equal(s.posted(),0);
+  }
+});
+
+test('single-word pending drafts cannot automatically publish; manual restoration remains held',async t=>{
+  const s=setup(t);s.store.saveSettings({...s.store.settings(),mode:'automatic'});add(s.store);
+  s.store.update('comment-1',{message:'Amen 😳',status:'pending',draft:'A previously generated full reply.',reply_decision:'REPLY',review:0,manual_hold:0});
+  await s.workflow.publish('comment-1',undefined,true);assert.equal(s.store.get('comment-1').status,'skipped');assert.equal(s.posted(),0);
+  await s.workflow.generate('comment-1',undefined,undefined,'improve',true);
+  assert.equal(s.store.get('comment-1').status,'pending');assert.equal(s.store.get('comment-1').manual_hold,1);
+  await s.workflow.tick();assert.equal(s.store.get('comment-1').status,'pending');assert.equal(s.posted(),0);
+});
+
+test('single-word policy preserves published history, follow-up approval and other Pages',async t=>{
+  const s=setup(t);s.store.saveSettings({...s.store.settings(),mode:'automatic'});
+  for(const id of ['sent','followup','foreign','two-words'])add(s.store,id);
+  s.store.update('sent',{message:'Amen 😳',status:'published',draft:'Already sent.',reply_id:'sent-reply'});
+  s.store.update('followup',{message:'Thanks 🙏',is_followup:1,manual_hold:1,status:'pending',review:1,draft:'An owner-held reply.'});
+  s.store.update('foreign',{message:'Amen'});s.store.db.prepare("UPDATE comments SET page_id='456' WHERE id='foreign'").run();
+  s.store.update('two-words',{message:'Thank you 🙏'});
+  s.workflow.applyReplyPolicy();
+  assert.equal(s.store.get('sent').status,'published');assert.equal(s.store.get('sent').reply_id,'sent-reply');
+  assert.equal(s.store.get('followup').status,'pending');assert.equal(s.store.get('followup').manual_hold,1);
+  assert.equal(s.store.get('foreign').status,'queued');assert.equal(s.store.get('two-words').status,'queued');
+});
+
+test('a skipped single-word comment stays skipped after an edit requeues it',async t=>{
+  const s=setup(t);s.store.saveSettings({...s.store.settings(),mode:'automatic'});let calls=0;
+  s.ai.generate=async()=>{calls++;return {reply:'A full generated reply.',reply_decision:'REPLY',needs_review:false};};
+  s.facebook.ingest(payload({message:'Amen 😳'}));await s.workflow.tick();
+  assert.equal(s.store.get('comment-1').status,'skipped');assert.equal(s.store.get('comment-1').manual_hold,1);
+  s.facebook.ingest(payload({verb:'edited',message:'Exactly 🙏'}));
+  assert.equal(s.store.get('comment-1').status,'queued');await s.workflow.tick();
+  assert.equal(s.store.get('comment-1').status,'skipped');assert.equal(calls,0);assert.equal(s.posted(),0);
+});
 
 test('24h activity retains received, approval, publication and attention timestamps after status changes',t=>{
   const {store}=setup(t),now=Date.now();
@@ -161,10 +228,10 @@ test('manual approval sends directly in every mode, including with a legacy paus
   }
 });
 
-test('publishing mode alone controls automatic sending while every mode generates drafts',async t=>{
+test('publishing mode controls sending while every mode drafts eligible multi-word comments',async t=>{
   for(const mode of ['approval','hybrid','automatic']) {
     const s=setup(t);s.store.saveSettings({...s.store.settings(),mode,paused:true});
-    assert.equal(s.facebook.ingest(payload({})),1);await s.workflow.tick();
+    assert.equal(s.facebook.ingest(payload({message:'Love it!'})),1);await s.workflow.tick();
     assert.equal(s.store.get('comment-1').draft,'Thanks for sharing!');
     assert.equal(s.store.get('comment-1').status,mode==='approval'?'pending':'published');
     assert.equal(s.posted(),mode==='approval'?0:1);
@@ -219,10 +286,32 @@ test('only one publication can run at a time',async t=>{const s=setup(t);add(s.s
 test('recovery marks interrupted publications uncertain',t=>{const dir=mkdtempSync(join(tmpdir(),'studio-recovery-'));let store=openStore(dir);add(store);store.update('comment-1',{status:'publishing'});store.close();store=openStore(dir);assert.equal(store.get('comment-1').status,'uncertain');store.close();rmSync(dir,{recursive:true,force:true});});
 test('loads the commented post preview in approval mode',async t=>{
   const {store,workflow}=setup(t);store.saveSettings({...store.settings(),mode:'approval'});
-  store.add({id:'c1',post_id:'123_456',message:'Nice',author:'Alex',source:'facebook'});
+  store.add({id:'c1',post_id:'123_456',message:'Nice post',author:'Alex',source:'facebook'});
   await workflow.tick();
   const c=store.get('c1');
   assert.equal(c.post_loaded,1);assert.equal(c.post_url,'https://www.facebook.com/post-1');assert.equal(c.post_image,'https://scontent.fbcdn.net/p.jpg');assert.equal(c.context,'Our new product');
+});
+
+test('single-word skips still get shared post previews without AI, publishing or Likes',async t=>{
+  const s=setup(t);let fetches=0,ai=0,likes=0;
+  s.facebook.post=async()=>{fetches++;return {caption:'Some memories stay.',url:'https://www.facebook.com/post',image:'https://example.com/post.jpg'};};
+  s.ai.generate=async()=>{ai++;};s.facebook.like=async()=>{likes++;};
+  for(const id of ['one','two'])s.store.add({id,post_id:'123_456',message:'Amen',source:'facebook'});
+  await s.workflow.tick();
+  for(const id of ['one','two']){const c=s.store.get(id);assert.equal(c.status,'skipped');assert.equal(c.post_loaded,1);assert.equal(c.context,'Some memories stay.');assert.equal(c.post_image,'https://example.com/post.jpg');assert.equal(c.draft,'');}
+  assert.equal(fetches,1);assert.equal(ai,0);assert.equal(likes,0);assert.equal(s.posted(),0);
+  await s.workflow.tick();assert.equal(fetches,1);
+});
+
+test('existing no-reply history reuses a saved post and does not touch cleared or other-Page comments',async t=>{
+  const s=setup(t);let fetches=0;s.facebook.post=async()=>{fetches++;throw Error('Should use saved preview');};
+  add(s.store,'saved');s.store.update('saved',{status:'published',context:'Saved caption',post_image:'https://example.com/saved.jpg',post_loaded:1});
+  for(const id of ['skipped','cleared','other']){add(s.store,id);s.store.update(id,{status:'skipped',context:'',draft:'',reply_decision:'SKIP',manual_hold:1});}
+  s.store.db.prepare("UPDATE comments SET cleared_at=? WHERE id='cleared'").run(Date.now());
+  s.store.db.prepare("UPDATE comments SET page_id='other-page' WHERE id='other'").run();
+  await s.workflow.loadPost();
+  const c=s.store.get('skipped');assert.equal(c.context,'Saved caption');assert.equal(c.post_loaded,1);assert.equal(c.status,'skipped');assert.equal(c.reply_decision,'SKIP');assert.equal(c.manual_hold,1);
+  assert.equal(s.store.get('cleared').post_loaded,0);assert.equal(s.store.get('other').post_loaded,0);assert.equal(fetches,0);
 });
 
 

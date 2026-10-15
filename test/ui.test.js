@@ -2,32 +2,38 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { JSDOM } from 'jsdom';
+import { followerMetrics, importFollowerReadings } from '../src/followers.js';
 
 const html=readFileSync('public/index.html','utf8');
 const script=readFileSync('public/app.js','utf8').replace('await refresh(true).catch(error=>notice(error.message,true));','window.__ready=refresh(true).catch(error=>notice(error.message,true));');
 const comment=(id,status='pending',extra={})=>({id,author:'Alex',source:'facebook',post_id:'123_456',post_url:'https://www.facebook.com/123_456',post_loaded:1,created_at:Date.now(),message:'Love this product!',context:'A new launch',draft:'Thank you for the support!',review:0,reason:'',error:'',status,...extra});
-async function setup(t,comments=[]) {
+async function setup(t,comments=[],guest=false) {
   const data={csrf:'test-csrf',settings:{personality:'Warm and helpful',knowledge:'Our FAQs',examples:'Thanks!',model:'',mode:'approval',aiProvider:'huggingface',hfSpace:'owner/space',pageId:'123',graphVersion:'v26.0',postIds:'',intervalSeconds:30},replyAI:{provider:'huggingface',enabled:true},huggingface:{hasToken:true},live:{on:true,receiving:true},facebook:{configured:true,hasAppSecret:true,verifyToken:'test-verify'},webhookUrl:'https://socialite.example.workers.dev/webhooks/facebook',memory:{enabled:true,total:0,counts:{},summary:null,revision:'0'},comments,activity:[{at:Date.now(),message:'Draft ready for Alex.'}]};
+  if(guest){data.readOnly=true;data.comments=data.comments.filter(c=>c.status==='published'&&c.publish_kind==='automatic'&&c.source==='facebook'&&!c.cleared_at);data.cloudflare={available:true,reads:100,writes:2,readLimit:5000000,writeLimit:100000};}
   const dom=new JSDOM(html,{url:'http://127.0.0.1:8787',runScripts:'outside-only'});
   const w=dom.window, calls=[];
+  w.__autoPublish=true;
+  w.confirm=()=>{throw Error('Browser confirmation must never be used.');};
   Object.defineProperty(w.document,'hidden',{value:false,configurable:true});
   w.__stateRequests=[];
   w.__cloudflareRequests=0;
   w.__cloudflareUsage={available:true,reads:170113,writes:656,readLimit:5000000,writeLimit:100000,updatedAt:Date.now(),resetAt:Math.floor(Date.now()/86400e3)*86400e3+86400e3};
-  w.HTMLDialogElement.prototype.showModal=function(){this.open=true;};
-  w.HTMLDialogElement.prototype.close=function(){this.open=false;this.dispatchEvent(new w.Event('close'));};
+  w.HTMLDialogElement.prototype.showModal=function(){this.open=true;if(this.id==='publish-dialog'&&w.__autoPublish)queueMicrotask(()=>w.document.getElementById('publish-confirm').click());};
+  w.HTMLDialogElement.prototype.close=function(value){if(!this.open)return;if(value!==undefined)this.returnValue=value;this.open=false;this.dispatchEvent(new w.Event('close'));};
   w.setInterval=fn=>{w.__poll=fn;};
   w.HTMLElement.prototype.scrollIntoView=()=>{};
   w.fetch=async(path,options)=>{
     if(path==='/api/cloudflare'){w.__cloudflareRequests++;return {ok:true,json:async()=>structuredClone(w.__cloudflareUsage)};}
     if(path.startsWith('/api/memory?')){const offset=Number(new URL(path,'http://127.0.0.1:8787').searchParams.get('offset'));const rows=w.__memoryRows||[];return {ok:true,json:async()=>({offset,total:rows.length,rows:rows.slice(offset,offset+20)})};}
-    if(path==='/api/state'){
+    if(path==='/api/state'&&guest)return {status:401,ok:false};
+    if(path==='/api/state'||path==='/api/public-state'){
       const etag=JSON.stringify(data);
       w.__stateRequests.push(options?.headers?.['If-None-Match']||'');
       if(options?.headers?.['If-None-Match']===etag)return {status:304,ok:false};
       return {status:200,ok:true,headers:{get:name=>name==='ETag'?etag:null},json:async()=>structuredClone(data)};
     }
     const input=JSON.parse(options.body);calls.push({path,input});
+    if(path==='/api/facebook/follower-history'){data.facebook.followersHistory=importFollowerReadings(data.facebook,input.readings);Object.assign(data.facebook,followerMetrics(data.facebook));return {ok:true,json:async()=>followerMetrics(data.facebook)};}
     if(path==='/api/chatgpt/check')return {ok:true,json:async()=>({models:[{id:'gpt-6-sol',name:'GPT 6 Sol'},{id:'gpt-6-luna',name:'GPT 6 Luna'}]})};
     if(path==='/api/settings')Object.assign(data.settings,input);
     if(path==='/api/settings'&&'learningEnabled' in input)data.memory.enabled=input.learningEnabled;
@@ -44,6 +50,54 @@ async function setup(t,comments=[]) {
   return {w,data,calls,$:s=>w.document.querySelector(s),input:(element,value)=>{element.value=value;element.dispatchEvent(new w.Event('input',{bubbles:true}));}};
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('themed publishing dialog previews edits, defaults to Keep editing, and Cancel sends nothing',async t=>{
+  const s=await setup(t,[comment('one')]);s.w.__autoPublish=false;s.input(s.$('[data-draft="one"]'),'My exact edited reply.');
+  const trigger=s.$('[data-action="approve"]');trigger.focus();trigger.click();await settle();
+  assert.equal(s.$('#publish-dialog').open,true);assert.equal(s.w.document.activeElement,s.$('#publish-cancel'));
+  assert.equal(s.$('#publish-recipient').textContent,'Alex');assert.equal(s.$('#publish-preview').textContent,'My exact edited reply.');assert.equal(s.calls.length,0);
+  s.$('#publish-cancel').click();await settle();
+  assert.equal(s.calls.length,0);assert.equal(s.data.comments[0].status,'pending');assert.equal(s.$('[data-draft="one"]').value,'My exact edited reply.');assert.equal(s.w.document.activeElement,trigger);
+  trigger.click();await settle();s.$('#publish-confirm').click();await settle();
+  assert.equal(s.calls.length,1);assert.equal(s.calls[0].path,'/api/approve');assert.equal(s.calls[0].input.draft,'My exact edited reply.');
+});
+
+test('keyboard approval opens the themed dialog and cannot bypass it',async t=>{
+  const s=await setup(t,[comment('one')]);s.w.__autoPublish=false;
+  for(let i=0;i<2;i++)s.w.document.dispatchEvent(new s.w.KeyboardEvent('keydown',{key:'a',bubbles:true}));
+  await settle();assert.equal(s.$('#publish-dialog').open,true);assert.equal(s.calls.length,0);
+  s.w.document.dispatchEvent(new s.w.KeyboardEvent('keydown',{key:'a',bubbles:true}));await settle();assert.equal(s.calls.length,0);
+  s.$('#publish-close').click();await settle();assert.equal(s.$('#publish-dialog').open,false);assert.equal(s.data.comments[0].status,'pending');
+});
+
+test('a changed draft cannot be published from an outdated confirmation preview',async t=>{
+  const s=await setup(t,[comment('one')]);s.w.__autoPublish=false;s.$('[data-action="approve"]').click();await settle();
+  s.data.comments[0].draft='A different reply arrived while reviewing.';await s.w.__poll();
+  s.$('#publish-confirm').click();await settle();assert.equal(s.calls.length,0);assert.match(s.$('#notice').textContent,/changed while you were reviewing/);
+});
+
+test('Wine and Silence button sits beside regeneration and requests the preset with current edits',async t=>{
+  const s=await setup(t,[comment('one')]);const button=s.$('[data-action="draft-personality"]');
+  assert.ok(button);assert.equal(s.$('[data-action="draft"]').nextElementSibling,button);
+  s.input(s.$('[data-draft="one"]'),'My current edit.');button.click();await settle();await settle();
+  assert.equal(s.calls[0].path,'/api/draft');assert.equal(s.calls[0].input.personalityPreset,'wine-and-silence');assert.equal(s.calls[0].input.draft,'My current edit.');
+  assert.equal(s.$('[data-draft="one"]').value,'A fresh generated reply.');assert.equal(s.$('[data-filter="pending"]').getAttribute('aria-pressed'),'true');
+  s.data.comments[0].status='published';await s.w.__poll();s.$('[data-filter="published"]').click();assert.equal(s.$('[data-action="draft-personality"]'),null);
+});
+
+test('follow-ups display the original conversation, current message and mandatory approval',async t=>{
+  const history=[{id:'original',author:'Alex',message:'The original comment',at:Date.now()-60000,isPage:false},{id:'page',author:'Our Page',message:'Our previous reply <script>untrusted</script>',at:Date.now()-30000,isPage:true}];
+  const s=await setup(t,[comment('followup','pending',{is_followup:1,thread_history:JSON.stringify(history),message:'My follow-up question',manual_hold:1})]);
+  assert.match(s.$('.thread-history').textContent,/The original comment/);assert.match(s.$('.thread-history').textContent,/Your Page/);assert.match(s.$('.thread-history').textContent,/Our previous reply/);
+  assert.equal(s.$('.thread-history script'),null);assert.match(s.$('.row-state').textContent,/Follow-up/);
+  assert.match(s.$('.said').textContent,/Latest follow-up/);assert.match(s.$('.convo-reply').textContent,/Always waits for your approval/);assert.ok(s.$('[data-action="approve"]'));
+});
+
+test('a follow-up without a suggested reply remains editable for an owner decision',async t=>{
+  const s=await setup(t,[comment('followup','pending',{is_followup:1,draft:'',reply_decision:'REVIEW',reason:'Follow-up needs your decision.'})]);
+  assert.ok(s.$('[data-draft="followup"]'));s.input(s.$('[data-draft="followup"]'),'My own thoughtful reply.');
+  await s.w.__poll();assert.equal(s.$('[data-draft="followup"]').value,'My own thoughtful reply.');assert.ok(s.$('[data-action="approve"]'));
+});
 
 test('Cloudflare overview shows real percentages and Publishing lives in the sidebar',async t=>{
   const s=await setup(t);await s.w.__poll();
@@ -540,27 +594,174 @@ test('the header shows the Page name and exact follower count on every screen',a
   s.data.facebook.followersCount=null;await s.w.__poll();await settle();assert.equal(s.$('#head-followers').textContent,'–');assert.equal(s.$('#head-updated').textContent,'');
 });
 
-test('header trend: follower history is kept in the browser and shows the 24h change',async t=>{
+test('owner legacy history transfers to the shared server metric and shows the 24h change',async t=>{
   const s=await setup(t);
   s.w.localStorage.setItem('socialite:followers:123',JSON.stringify([[Date.now()-26*3600e3,7760],[Date.now()-3*3600e3,7761]]));
   s.data.facebook.followersCount=7763;s.data.facebook.followersUpdatedAt=Date.now();s.data.live={on:true};
   await s.w.__poll();await settle();
   assert.equal(s.$('#head-followers').textContent,'7,763');
   assert.equal(s.$('#head-delta').textContent,'+3 in 24h');assert.ok(s.$('#head-delta').classList.contains('up'));
-  assert.ok(s.$('#head-trend path.line'),'trend line drawn');
+  assert.equal(s.$('#head-trend path.line'),null,'sparse totals cannot invent hourly gains');
+  assert.equal(s.$('#head-trend-label').textContent,'Collecting hourly gains');
   assert.equal(s.$('.pagebar').dataset.live,'true');assert.equal(s.$('#head-sync').textContent,'Live on Facebook');
-  assert.equal(JSON.parse(s.w.localStorage.getItem('socialite:followers:123')).length,3,'new reading saved');
+  assert.equal(s.calls.filter(c=>c.path==='/api/facebook/follower-history').length,1,'legacy history transferred once');
+  assert.equal(s.data.facebook.followersDelta24h,3);
+  assert.equal(s.data.facebook.followersHistoryReady,true);
   s.data.live={on:false};await s.w.__poll();await settle();assert.equal(s.$('#head-sync').textContent,'Paused while Live Off');
 });
 
 test('header stays quiet when followers did not change, and shows the Page logo when connected',async t=>{
   const s=await setup(t);
   s.w.localStorage.setItem('socialite:followers:123',JSON.stringify([[Date.now()-5*3600e3,7770]]));
-  s.data.facebook.followersCount=7770;s.data.facebook.followersUpdatedAt=Date.now();
+  const end=Math.floor(Date.now()/3600e3)*3600e3;
+  s.data.facebook.followersHistoryReady=true;
+  s.data.facebook.followersCount=7770;s.data.facebook.followersUpdatedAt=Date.now();s.data.facebook.followersDelta24h=0;s.data.facebook.followersHistory=[[end-3600e3,7770],[end,7770]];s.data.facebook.followersDailyGains=[[end,0]];
   await s.w.__poll();await settle();
   assert.equal(s.$('#head-delta').textContent,'','no "0 in 24h" badge');
   assert.ok(s.$('#head-trend .flat'),'quiet dashed baseline');assert.equal(s.$('#head-trend .line'),null,'no glowing line');
   assert.equal(s.$('#head-logo').hidden,false);assert.equal(s.$('#head-initial').hidden,true);
   s.data.facebook.configured=false;await s.w.__poll();await settle();
   assert.equal(s.$('#head-logo').hidden,true);assert.equal(s.$('#head-initial').textContent,'?');
+});
+
+
+test('hourly gains show slower growth and losses without changing totals for owner or visitor',async t=>{
+  for(const guest of [false,true]){
+    const s=await setup(t,[],guest),hour=3600e3,now=Date.now(),end=Math.floor(now/hour)*hour;
+    Object.assign(s.data.facebook,{followersCount:1140,followersUpdatedAt:now,followersHistoryReady:true,followersDelta24h:140,
+      followersHistory:[[end-3*hour,1000],[end-2*hour,1100],[end-hour,1150],[end,1140]]});
+    if(guest)s.w.Date.now=()=>now+61000;
+    await s.w.__poll();await settle();
+    const dots=[...s.w.document.querySelectorAll('#head-trend circle')];
+    assert.equal(dots.length,3);
+    assert.ok(+dots[0].getAttribute('cy')<+dots[1].getAttribute('cy'));
+    assert.ok(+dots[1].getAttribute('cy')<+dots[2].getAttribute('cy'));
+    assert.match(dots[0].textContent,/\+100 net followers in 1 hour/);assert.match(dots[1].textContent,/\+50 net followers in 1 hour/);
+    assert.match(dots[2].textContent,/-10 net followers in 1 hour/);assert.ok(dots[2].classList.contains('loss'));
+    assert.match(dots[2].textContent,/SGT/);assert.match(s.$('#head-trend .line').getAttribute('d'),/C/);
+    assert.equal(s.$('#head-trend-label').textContent,'Hourly gains / 24 hours');
+    assert.equal(s.$('#head-delta').textContent,'+140 in 24h');assert.equal(s.calls.length,0);
+  }
+});
+
+test('graph peak and low use Singapore hours and hover, touch and keyboard work in viewer mode',async t=>{
+  for(const guest of [false,true]){
+    const s=await setup(t,[],guest),hour=3600e3,end=Date.parse('2100-01-02T01:00:00+08:00');
+    s.w.Date.now=()=>end+30*60000;
+    Object.assign(s.data.facebook,{followersCount:1090,followersUpdatedAt:end,followersHistoryReady:true,
+      followersHistory:[[end-2*hour,1000],[end-hour,1100],[end,1090]]});
+    await s.w.__poll();await settle();
+    const summary=s.$('#head-trend-summary');
+    assert.equal(summary.hidden,false);assert.match(summary.textContent,/Peak 11PM\u201312AM/);assert.match(summary.textContent,/Low 12\u20131AM/);
+    const hit=s.$('#head-trend [data-trend-hour="22"]'),tooltip=s.$('#head-trend-tooltip');
+    hit.dispatchEvent(new s.w.MouseEvent('pointermove',{bubbles:true}));
+    assert.equal(tooltip.hidden,false);assert.match(tooltip.textContent,/1 Jan/);assert.match(tooltip.textContent,/SGT/);assert.match(tooltip.textContent,/\+100 net followers/);
+    const touch=new s.w.MouseEvent('pointerdown',{bubbles:true});Object.defineProperty(touch,'pointerType',{value:'touch'});hit.dispatchEvent(touch);
+    const leave=new s.w.MouseEvent('pointerleave');Object.defineProperty(leave,'pointerType',{value:'touch'});s.$('#head-trend').dispatchEvent(leave);
+    assert.equal(tooltip.hidden,false,'tap details persist after lifting a finger');
+    s.w.document.body.dispatchEvent(new s.w.MouseEvent('pointerdown',{bubbles:true}));assert.equal(tooltip.hidden,true);
+    if(!guest){
+      s.$('#head-trend').focus();assert.match(tooltip.textContent,/-10 net followers/);
+      s.$('#head-trend').dispatchEvent(new s.w.KeyboardEvent('keydown',{key:'ArrowLeft',bubbles:true}));assert.match(tooltip.textContent,/\+100 net followers/);
+      s.$('#head-trend').dispatchEvent(new s.w.KeyboardEvent('keydown',{key:'Escape',bubbles:true}));assert.equal(tooltip.hidden,true);
+    }
+    assert.equal(s.calls.length,0);
+  }
+});
+
+test('flat hourly data says steady rather than suggesting a peak, and missing history hides the summary',async t=>{
+  const s=await setup(t),hour=3600e3,end=Math.floor(Date.now()/hour)*hour;
+  Object.assign(s.data.facebook,{followersCount:1000,followersUpdatedAt:end,followersHistoryReady:true,followersHistory:[[end-2*hour,1000],[end-hour,1000],[end,1000]]});
+  await s.w.__poll();assert.equal(s.$('#head-trend-summary').textContent,'Steady 0 / hour');
+  s.data.facebook.followersHistory=[];await s.w.__poll();assert.equal(s.$('#head-trend-summary').hidden,true);assert.equal(s.$('#head-trend-tooltip').hidden,true);
+});
+
+test('hourly gains exclude unfinished hours, stale boundaries and historical estimates',async t=>{
+  const s=await setup(t),hour=3600e3,now=Date.now(),end=Math.floor(now/hour)*hour;
+  Object.assign(s.data.facebook,{followersCount:2000,followersUpdatedAt:now,followersHistoryReady:true,
+    followersDailyGains:Array.from({length:30},(_,i)=>[end-i*24*hour,500]),
+    followersHistory:[[end-5*hour,1000],[end-4*hour,1010],[end-2*hour-16*60000,1050],[end-hour,1100],[end,1120],[end+1,2000]]});
+  await s.w.__poll();await settle();
+  const path=s.$('#head-trend path.line').getAttribute('d');
+  assert.equal((path.match(/M/g)||[]).length,2,'missing hours are gaps');
+  assert.equal((path.match(/C/g)||[]).length,0);
+  const titles=[...s.w.document.querySelectorAll('#head-trend circle title')].map(p=>p.textContent);
+  assert.equal(titles.length,2);assert.match(titles[0],/\+10 net followers/);assert.match(titles[1],/\+20 net followers/);
+  assert.equal(s.w.document.querySelectorAll('#head-trend .estimated').length,0);
+});
+
+test('visitors land on only automatically published replies with settings locked, including DOM and keyboard bypass attempts',async t=>{
+  const s=await setup(t,[comment('auto1','published',{publish_kind:'automatic'}),comment('auto2','published',{publish_kind:'automatic'}),comment('manual','published',{publish_kind:'approved'}),comment('edited','published',{publish_kind:'edited'}),comment('external','published',{publish_kind:'external'}),comment('legacy','published'),comment('private')],true);
+  assert.equal(s.w.document.body.dataset.access,'visitor');
+  assert.equal(s.$('[data-filter="automatic"]').getAttribute('aria-pressed'),'true');
+  assert.equal(s.$('#visitor-access').hidden,false);assert.equal(s.$('#visitor-sign-in').getAttribute('href'),'/login');
+  for(const id of ['manual','edited','external','legacy'])assert.equal(s.$('[data-row="'+id+'"]'),null);
+  assert.equal(s.$('[data-row="private"]'),null);assert.equal(s.w.__cloudflareRequests,0);
+  for(const el of s.w.document.querySelectorAll('button,input,select,textarea'))if(!el.matches('[data-row],[data-back]'))assert.equal(el.disabled,true,el.id);
+  s.$('[data-row="auto2"]').click();assert.equal(s.$('[data-comment="auto2"]').hidden,false);
+  for(const id of ['open-test','live-switch','verify-fb','save-model','sign-out']){
+    const b=s.$('#'+id);b.disabled=false;b.click();
+  }
+  const filter=s.$('[data-filter="pending"]');filter.disabled=false;filter.click();
+  s.$('#rules-form').dispatchEvent(new s.w.Event('submit',{bubbles:true,cancelable:true}));
+  for(const key of ['a','a','r','e'])s.w.document.dispatchEvent(new s.w.KeyboardEvent('keydown',{key,bubbles:true}));
+  s.w.location.hash='#connections';s.w.dispatchEvent(new s.w.HashChangeEvent('hashchange'));
+  await settle();assert.equal(s.$('#connections').hidden,true);assert.equal(s.$('#test-form').hidden,true);
+  assert.equal(s.$('[data-filter="automatic"]').getAttribute('aria-pressed'),'true');assert.equal(s.calls.length,0);
+  await s.w.__poll();assert.equal(s.calls.length,0);assert.equal(s.w.__cloudflareRequests,0);
+});
+
+
+test('Page age uses elapsed days and the Singapore creation time, hiding unavailable dates',async t=>{
+  const s=await setup(t);const created=Date.parse('2026-09-12T14:00:00+08:00');
+  s.data.facebook.pageCreatedAt=created;await s.w.__poll();
+  assert.equal(s.$('#head-age').hidden,false);
+  assert.equal(s.$('#head-age').textContent,'Facebook Page · '+Math.floor((Date.now()-created)/86400e3).toLocaleString()+' days old');
+  assert.match(s.$('#head-age').title,/12 Sept 2026|12 Sep 2026/);assert.match(s.$('#head-age').title,/02:00 pm|02:00 PM|2:00 pm|2:00 PM/);
+  s.data.facebook.pageCreatedAt=null;await s.w.__poll();assert.equal(s.$('#head-age').hidden,true);
+});
+
+
+test('owner and visitor show the same +590 with conflicting browser-local follower histories',async t=>{
+  for(const guest of [false,true]){
+    const s=await setup(t,[],guest),now=Date.now();
+    s.w.localStorage.setItem('socialite:followers:123',JSON.stringify([[now-25*3600e3,8965],[now-1000,8971]]));
+    Object.assign(s.data.facebook,{followersCount:8971,followersUpdatedAt:now,followersDelta24h:590,followersHistoryReady:true,followersHistory:[[now-25*3600e3,8381],[now,8971]]});
+    if(guest)s.w.Date.now=()=>now+61000;
+    await s.w.__poll();await settle();
+    assert.equal(s.$('#head-delta').textContent,'+590 in 24h');assert.equal(s.$('#head-trend path.line'),null,'two totals a day apart cannot supply hourly gains');
+    assert.equal(s.calls.length,0,'no browser history overrides the shared total');
+  }
+});
+
+test('a fresh viewer cannot invent a 24h gain from a short local history',async t=>{
+  const s=await setup(t,[],true),now=Date.now();
+  s.w.localStorage.setItem('socialite:followers:123',JSON.stringify([[now-60000,8965],[now,8971]]));
+  Object.assign(s.data.facebook,{followersCount:8971,followersUpdatedAt:now,followersDelta24h:null,followersHistoryReady:false,followersHistory:[[now,8971]]});
+  s.w.Date.now=()=>now+61000;await s.w.__poll();await settle();
+  assert.equal(s.$('#head-delta').textContent,'');assert.equal(s.calls.length,0);
+});
+
+
+test('short owner history migrates successfully and visitors show the same observed gain',async t=>{
+  const s=await setup(t),now=Date.now();
+  s.w.localStorage.setItem('socialite:followers:123',JSON.stringify([[now-10*3600e3,8381],[now-60000,8971]]));
+  Object.assign(s.data.facebook,{followersCount:8971,followersUpdatedAt:now,followersHistoryReady:false,followersDelta24h:null});
+  await s.w.__poll();await settle();
+  assert.equal(s.$('#head-delta').textContent,'+590 since tracking');
+  assert.equal(s.calls.filter(c=>c.path==='/api/facebook/follower-history').length,1);
+  assert.equal(s.data.facebook.followersObservedChange,590);
+  s.w.Date.now=()=>now+6*60000;await s.w.__poll();await settle();
+  assert.equal(s.calls.filter(c=>c.path==='/api/facebook/follower-history').length,1,'successful transfer is not repeated every five minutes');
+  s.data.readOnly=true;await s.w.__poll();await settle();
+  assert.equal(s.$('#head-delta').textContent,'+590 since tracking');
+});
+
+test('failed follower transfer reports the server error instead of hiding it',async t=>{
+  const s=await setup(t),now=Date.now(),fetch=s.w.fetch;
+  s.w.localStorage.setItem('socialite:followers:123',JSON.stringify([[now-10*3600e3,8381]]));
+  Object.assign(s.data.facebook,{followersCount:8971,followersUpdatedAt:now});
+  s.w.fetch=async(path,options)=>path==='/api/facebook/follower-history'?{ok:false,status:400,json:async()=>({error:'Follower history does not match a saved Facebook reading.'})}:fetch(path,options);
+  await s.w.__poll();await settle();
+  assert.match(s.$('#notice').textContent,/Could not transfer older follower readings/);assert.equal(s.$('#notice').hidden,false);
 });

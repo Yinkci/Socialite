@@ -3,3 +3,15 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
   Cache-Control: no-cache
+
+/
+  X-Robots-Tag: index, follow
+
+/index.html
+  X-Robots-Tag: index, follow
+
+/login
+  X-Robots-Tag: noindex, follow
+
+/login.html
+  X-Robots-Tag: noindex, follow

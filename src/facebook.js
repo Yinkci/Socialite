@@ -1,4 +1,6 @@
 import { createHmac, timingSafeEqual } from 'node:crypto';
+import { objectId, resolveThread } from './threads.js';
+import { followerReadings } from './followers.js';
 
 export function validSignature(raw, signature, secret) {
   if(!secret||typeof signature!=='string') return false;
@@ -30,7 +32,10 @@ export class Facebook {
     if(page.id!==s.pageId) throw new Error('This token belongs to a different Page. Supply the selected Page’s access token.');
     if(this.store.settings().pageId!==s.pageId||this.vault.get('facebookToken')!==token)throw new Error('Facebook connection changed during verification. Please verify again.');
     const current=this.store.settings(), cached=current.facebookPage?.id===page.id?current.facebookPage:{};
-    const stats=includeFollowers&&Number.isSafeInteger(page.followers_count)&&page.followers_count>=0?{followersCount:page.followers_count,followersUpdatedAt:Date.now()}:{};
+    const at=Date.now(),stats=includeFollowers&&Number.isSafeInteger(page.followers_count)&&page.followers_count>=0?{
+      followersCount:page.followers_count,followersUpdatedAt:at,
+      followersHistory:followerReadings([...(cached.followersHistory||[]),[cached.followersUpdatedAt,cached.followersCount],[at,page.followers_count]],at),
+    }:{};
     if(typeof page.name==='string'&&page.name.trim())this.store.saveSettings({...current,facebookPage:{...cached,id:page.id,name:page.name,...stats}});
     return {id:page.id,name:page.name};
   }
@@ -50,6 +55,35 @@ export class Facebook {
     return {caption:p.message||'',url:https(p.permalink_url),image:https(p.full_picture)};
   }
   async publish(comment) { return this.request(comment.id+'/comments','POST',{message:comment.draft}); }
+  async commentReplies(id){
+    const rows=[];let after;
+    for(let page=0;page<3;page++){
+      const result=await this.request(id+'/comments','GET',{fields:'id,message,from,parent,created_time',limit:100,...(after?{after}:{})});
+      rows.push(...(result.data||[]));
+      if(!result.paging?.next)return rows;
+      after=result.paging.cursors?.after;if(!after)break;
+    }
+    throw Error('This thread is too long to verify safely. Check it on Facebook before replying.');
+  }
+  async existingReply(comment){return (await this.commentReplies(comment.id)).find(r=>r.from?.id===this.store.settings().pageId);}
+  async ingestWithThreads(payload){
+    let count=this.ingest(payload);if(payload.object!=='page')return count;
+    const settings=this.store.settings(),allowed=settings.postIds.split(/[\s,]+/).filter(Boolean);
+    for(const entry of payload.entry||[])for(const change of entry.changes||[]){
+      const v=change.value||{};
+      if(String(entry.id)!==settings.pageId||change.field!=='feed'||v.item!=='comment'||v.verb!=='add'||!v.message||!v.comment_id||!v.post_id||!v.parent_id||objectId(v.parent_id)===objectId(v.post_id)||v.from?.id===settings.pageId||(allowed.length&&!allowed.includes(v.post_id)))continue;
+      const known=this.store.threadRecord(v.comment_id,v.post_id);
+      if(known)continue; // Includes our own recorded reply IDs and alternate ID formatting on retries.
+      let thread;
+      try{
+        if(!v.from?.id){const current=await this.request(v.comment_id,'GET',{fields:'id,from'});if(current.from?.id===settings.pageId)continue;}
+        thread=await resolveThread(this,v.parent_id,v.post_id,v.comment_id);if(!thread.eligible)continue;
+      }catch(error){thread={status:'error',error:'Follow-up context could not be loaded. '+error.message};}
+      const canonicalId=objectId(v.post_id)+'_'+objectId(v.comment_id);
+      if(this.store.add({id:canonicalId,post_id:v.post_id,author:v.from?.name,author_id:v.from?.id,message:v.message,source:'facebook',parent_id:v.parent_id,is_followup:1,...thread}))count++;
+    }
+    return count;
+  }
   async like(comment) {
     // Generic object /likes supports Page likes. Reactions /reactions is read-only.
     // A Like cannot replace an existing Heart/Care; never report that as a Like.
@@ -113,11 +147,11 @@ export class Facebook {
           continue;
         }
         if(v.verb!=='add'||!v.message||v.from?.id===s.pageId||!v.post_id) continue;
-        // Top-level comments only. Thread replies can include the Page's own reply and cause loops.
+        // Top-level comments are ingested synchronously. Nested replies are verified by ingestWithThreads.
         // Photo posts send parent_id as {other id}_{object id}, so compare only the object id after the last underscore.
         if(v.parent_id&&String(v.parent_id).split('_').pop()!==String(v.post_id).split('_').pop()) continue;
         if(allowed.length&&!allowed.includes(v.post_id)) continue;
-        if(this.store.add({id:v.comment_id,post_id:v.post_id,author:v.from?.name,message:v.message,source:'facebook',post_url:String(v.post?.permalink_url||'').startsWith('https://')?v.post.permalink_url:''})) count++;
+        if(this.store.add({id:v.comment_id,post_id:v.post_id,author:v.from?.name,author_id:v.from?.id,message:v.message,source:'facebook',post_url:String(v.post?.permalink_url||'').startsWith('https://')?v.post.permalink_url:''})) count++;
       }
     }
     return count;

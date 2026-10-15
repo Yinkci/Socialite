@@ -15,9 +15,11 @@ import { hashPassword, verifyPassword, randomToken, sha256 } from './auth.js';
 import { DashboardCache } from './dashboard-cache.js';
 import { ensureWorkAlarm } from './alarm.js';
 import { CloudflareUsage } from './cloudflare-usage.js';
+import { publicDashboard } from './public-dashboard.js';
+import { followerMetrics, importFollowerReadings } from './followers.js';
 
 const TICK_MS=15000, STATS_MS=5*60*1000, SESSION_MS=30*24*60*60*1000;
-const SECURITY_HEADERS={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer'};
+const SECURITY_HEADERS={'Cache-Control':'no-store','X-Content-Type-Options':'nosniff','Referrer-Policy':'no-referrer','X-Socialite-Reply-Policy':'caption-meaning-v1, single-word-comments-v2'};
 
 function json(status,value,headers={}) {
   return new Response(JSON.stringify(value),{status,headers:{'Content-Type':'application/json',...SECURITY_HEADERS,...headers}});
@@ -49,6 +51,7 @@ export class SocialiteApp extends DurableObject {
     super(ctx, env);
     this.store=new Store(new DurableDatabase(ctx.storage.sql));
     this.dashboardCache=new DashboardCache();
+    this.publicDashboardCache=new DashboardCache();
     this.dashboardInstance=randomToken(12);
     this.cloudflareUsage=new CloudflareUsage(env.CLOUDFLARE_ACCOUNT_ID,env.CLOUDFLARE_ANALYTICS_TOKEN);
     this.vault=new Vault(ctx.storage.kv);
@@ -86,7 +89,7 @@ export class SocialiteApp extends DurableObject {
       const body=request.method==='POST'?Buffer.from(await request.arrayBuffer()):Buffer.alloc(0);
       if(body.length>1024*1024) return json(413,{error:'Request too large'});
       const input=()=>{try{return JSON.parse(body.toString()||'{}');}catch{return {};}};
-      if(path==='/internal/wake') {const alarmAt=await this.ensureAlarm();return json(200,{ok:true,alarmAt});}
+      if(path==='/internal/wake') {if(url.hostname!=='internal'||request.method!=='POST')return json(404,{error:'Not found'});const alarmAt=await this.ensureAlarm();return json(200,{ok:true,alarmAt});}
       if(path==='/internal/import') return await this.importData(request,input());
       if(path==='/internal/import-chatgpt') return await this.importChatGPT(request,input());
       if(path==='/webhooks/facebook') return await this.webhook(request,url,body);
@@ -94,16 +97,26 @@ export class SocialiteApp extends DurableObject {
       if(path==='/api/auth-status'&&request.method==='GET') return json(200,{setup:!this.vault.get('passwordHash'),signedIn:!!this.session(request)});
       if(path==='/api/login'&&request.method==='POST') return await this.login(request,url,input());
       if(path==='/api/logout'&&request.method==='POST') {
+        if(request.headers.get('origin')!==url.origin)return json(403,{error:'Invalid request.'});
         const sid=this.cookie(request);if(sid)this.ctx.storage.kv.delete('session:'+sha256(sid));
         return json(200,{ok:true},{'Set-Cookie':'sid=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0'});
       }
       const session=this.session(request);
+      if(path==='/api/public-state'&&request.method==='GET') {
+        const key=this.dashboardKey(),etag='"'+sha256('public:'+key)+'"';
+        if(request.headers.get('if-none-match')===etag)return new Response(null,{status:304,headers:{...SECURITY_HEADERS,ETag:etag}});
+        const snapshot=await this.publicDashboardCache.read(key,async()=>publicDashboard(
+          await this.dashboardCache.read(key,()=>this.state({csrf:''},url)),
+          this.store.listAutomatic(),await this.cloudflareUsage.read(),
+        ));
+        return json(200,snapshot,{ETag:etag});
+      }
       if(!session) return json(401,{error:'Please sign in.'});
       if(request.method==='GET'&&path==='/api/cloudflare')return json(200,await this.cloudflareUsage.read());
       if(request.method==='GET'&&path==='/api/state') {
         // SQL mutations, credentials, webhook status or a new minute invalidate the shared snapshot.
         // The minute also expires rolling 24-hour statistics when no new comments arrive.
-        const key=JSON.stringify([this.dashboardInstance,this.store.db.revision,this.vault.revision,this.live.status,Math.floor(Date.now()/60000)]);
+        const key=this.dashboardKey();
         const etag='"'+sha256(key+session.csrf)+'"';
         if(request.headers.get('if-none-match')===etag)return new Response(null,{status:304,headers:{...SECURITY_HEADERS,ETag:etag}});
         const snapshot=await this.dashboardCache.read(key,()=>this.state({csrf:''},url));
@@ -121,6 +134,7 @@ export class SocialiteApp extends DurableObject {
   }
 
   // ---- Login: one owner password, stored as a PBKDF2 hash; sessions in a Secure HttpOnly cookie.
+  dashboardKey() { return JSON.stringify([this.dashboardInstance,this.store.db.revision,this.vault.revision,this.live.status,Math.floor(Date.now()/60000)]); }
   cookie(request) { return (request.headers.get('cookie')||'').match(/(?:^|;\s*)sid=([A-Za-z0-9_-]{20,})/)?.[1]; }
   session(request) {
     const sid=this.cookie(request);if(!sid)return null;
@@ -161,17 +175,18 @@ export class SocialiteApp extends DurableObject {
     if(request.method!=='POST') return json(405,{error:'Method not allowed'});
     if(!validSignature(raw,request.headers.get('x-hub-signature-256'),this.vault.get('appSecret'))) return json(403,{error:'Invalid signature'});
     if(!this.live.on()) return json(200,{received:false});
-    const count=this.facebook.ingest(JSON.parse(raw.toString()));
+    const count=await this.facebook.ingestWithThreads(JSON.parse(raw.toString()));
     if(count) this.store.log(`Received ${count} new Facebook comment${count===1?'':'s'}.`);
     return json(200,{received:true});
   }
 
   async state(session,url) {
     const {store,vault,facebook,workflow}=this, s=store.settings(), page=facebook.configured()&&s.facebookPage?.id===s.pageId?s.facebookPage:null;
+    const createdAt=s.pageId===this.env.PAGE_CREATED_ID?Date.parse(this.env.PAGE_CREATED_AT):NaN;
     return {app:'Socialite',csrf:session.csrf,settings:s,
       replyAI:this.ai.status(),
       chatgpt:this.chatgpt.status(),huggingface:{hasToken:!!vault.get('hfToken')},
-      facebook:{configured:facebook.configured(),pageName:page?.name||'',followersCount:page?.followersCount??null,followersUpdatedAt:page?.followersUpdatedAt??null,hasAppSecret:!!vault.get('appSecret'),hasToken:!!vault.get('facebookToken'),verifyToken:vault.get('verifyToken')},
+      facebook:{configured:facebook.configured(),pageName:page?.name||'',followersCount:page?.followersCount??null,followersUpdatedAt:page?.followersUpdatedAt??null,...followerMetrics(page),pageCreatedAt:Number.isFinite(createdAt)?createdAt:null,hasAppSecret:!!vault.get('appSecret'),hasToken:!!vault.get('facebookToken'),verifyToken:vault.get('verifyToken')},
       memory:workflow.memory.status(),comments:store.list(),kpiTimes:store.kpiTimes(),tabCounts:store.tabCounts(),clearableCounts:store.clearableCounts(),activity:store.activity(),
       webhookUrl:this.webhookUrl()||url.origin+'/webhooks/facebook',live:await this.live.state()};
   }
@@ -201,6 +216,16 @@ export class SocialiteApp extends DurableObject {
 
   async api(path,input,url) {
     const {store,vault,facebook,workflow,huggingface}=this;
+    if(path==='/api/facebook/follower-history') {
+      const s=store.settings(),page=s.facebookPage;
+      if(input.pageId!==s.pageId||page?.id!==s.pageId||!facebook.configured())throw Error('Facebook Page changed. Reload the dashboard.');
+      if(!followerMetrics(page).followersHistoryReady){
+        const followersHistory=importFollowerReadings(page,input.readings);
+        store.saveSettings({...s,facebookPage:{...page,followersHistory}});
+      }
+      const saved=store.settings().facebookPage;
+      return {followersCount:saved.followersCount,followersUpdatedAt:saved.followersUpdatedAt,...followerMetrics(saved)};
+    }
     if(path==='/api/settings') {
       if(typeof input.hfToken==='string'&&input.hfToken.trim()){const token=input.hfToken.trim();if(!token.startsWith('hf_')||token.length<20||token.length>200||/[^A-Za-z0-9_]/.test(token))throw new Error('Paste a Hugging Face access token. It starts with hf_.');vault.set('hfToken',token);}
       store.saveSettings(this.validateSettings(input));return {ok:true};
@@ -238,7 +263,7 @@ export class SocialiteApp extends DurableObject {
     if(['/api/draft','/api/approve','/api/resolve-uncertain'].includes(path))this.live.require();
     const c=store.get(input.id);
     if(!c||c.cleared_at) throw new Error('Comment not found');
-    if(path==='/api/draft') {if(!['queued','pending','error','rejected','skipped'].includes(c.status)) throw new Error('This comment cannot be drafted.');const result=await workflow.generate(c.id,input.draft,input.instructions,input.editingMode,true);if(result?.ok===false)throw new Error(result.error);const current=store.get(c.id);return {ok:true,...result,status:current.status,reason:current.reason};}
+    if(path==='/api/draft') {if(!['queued','pending','error','rejected','skipped'].includes(c.status)) throw new Error('This comment cannot be drafted.');const result=await workflow.generate(c.id,input.draft,input.instructions,input.editingMode,true,input.personalityPreset??'');if(result?.ok===false)throw new Error(result.error);const current=store.get(c.id);return {ok:true,...result,status:current.status,reason:current.reason};}
     if(path==='/api/approve') {await workflow.publish(c.id,input.draft);return {ok:true};}
     if(path==='/api/reject') {if(!['queued','pending','error'].includes(c.status)) throw new Error('This reply cannot be dismissed.');store.update(c.id,{status:'rejected',manual_hold:1,error:''});return {ok:true};}
     if(path==='/api/resolve-uncertain') {

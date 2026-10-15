@@ -3,7 +3,21 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>Socialite</title>
+<title>Socialite | Wine &amp; Silence AI Comment Reply Dashboard</title>
+<meta name="description" content="Explore Wine &amp; Silence's automatically published Facebook replies, recent comment activity, and follower updates in Socialite's live AI reply dashboard.">
+<link rel="canonical" href="https://socialite.wineandsilence.workers.dev/">
+<meta name="robots" content="index, follow, max-image-preview:large">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="Socialite">
+<meta property="og:title" content="Socialite | Wine &amp; Silence AI Comment Reply Dashboard">
+<meta property="og:description" content="Explore Wine &amp; Silence's automatically published Facebook replies, recent comment activity, and follower updates in Socialite's live AI reply dashboard.">
+<meta property="og:url" content="https://socialite.wineandsilence.workers.dev/">
+<meta property="og:image" content="https://socialite.wineandsilence.workers.dev/page-logo.jpg">
+<meta property="og:image:alt" content="Wine and Silence Facebook Page">
+<meta name="twitter:card" content="summary">
+<meta name="twitter:title" content="Socialite | Wine &amp; Silence AI Comment Reply Dashboard">
+<meta name="twitter:description" content="Explore Wine &amp; Silence's automatically published Facebook replies, recent comment activity, and follower updates in Socialite's live AI reply dashboard.">
+<meta name="twitter:image" content="https://socialite.wineandsilence.workers.dev/page-logo.jpg">
 <meta name="color-scheme" content="dark">
 <meta name="theme-color" content="#0a0a0b">
 <link rel="icon" href="/favicon.ico?v=socialite-3" sizes="16x16 32x32 48x48 64x64">
@@ -14,12 +28,13 @@
 <link rel="stylesheet" href="/style.css">
 <script type="module" src="/app.js"></script>
 </head>
-<body>
+<body data-access="loading">
 <a class="skip" href="#main">Skip to content</a>
 <div class="shell">
 
 <aside class="side" aria-label="Socialite">
   <a class="brand" href="#queue"><img src="/logo.svg?v=socialite-3" alt="" width="22" height="22"><span>Socialite</span></a>
+  <div id="visitor-access" class="visitor-access" hidden role="note" aria-label="Viewer mode"><div class="visitor-copy"><strong>Viewer mode</strong><span>You can read automatically published replies. Sign in to use the controls and change settings.</span></div><a href="/login" id="visitor-sign-in" class="btn btn-accent">Sign in to control</a></div>
 
   <section class="agent" aria-label="Agent status">
     <button type="button" id="live-switch" class="agent-switch" role="switch" aria-checked="false" aria-describedby="agent-help">
@@ -56,17 +71,20 @@
   <div id="notice" class="toast" hidden role="status"></div>
   <span id="section-label" class="sr-only">Comment inbox</span>
   <div class="pagebar" aria-label="Facebook Page" data-live="false">
-    <div class="pb-id">
-      <span class="pb-avatar" aria-hidden="true"><img id="head-logo" src="/page-logo.jpg" alt="" width="44" height="44" hidden><span id="head-initial">?</span></span>
-      <div class="pb-name">
-        <strong id="head-page">Facebook Page not connected</strong>
-        <span class="pb-sub"><span id="head-dot" class="dot" aria-hidden="true"></span><span id="head-sync">Not connected</span><span id="head-updated" class="pb-time mono"></span></span>
+    <div class="pb-profile">
+      <div class="pb-id">
+        <span class="pb-avatar" aria-hidden="true"><img id="head-logo" src="/page-logo.jpg" alt="" width="48" height="48" hidden><span id="head-initial">?</span></span>
+        <div class="pb-name">
+          <strong id="head-page">Facebook Page not connected</strong>
+          <span class="pb-sub"><span id="head-dot" class="dot" aria-hidden="true"></span><span id="head-sync">Not connected</span></span>
+        </div>
       </div>
+      <div class="pb-meta"><span id="head-updated" class="pb-time mono"></span><span id="head-age" class="pb-age" hidden></span></div>
     </div>
     <div class="pb-metric">
       <span class="pb-label">Followers</span>
       <span class="pb-figure"><strong id="head-followers" class="pb-count mono" aria-live="polite">–</strong><span id="head-delta" class="pb-delta mono"></span><span id="head-followers-label" class="sr-only">followers</span></span>
-      <svg id="head-trend" class="pb-trend" viewBox="0 0 160 40" preserveAspectRatio="none" aria-hidden="true"></svg>
+      <div class="pb-trend-wrap"><svg id="head-trend" class="pb-trend" viewBox="0 0 160 40" preserveAspectRatio="none" role="img" tabindex="0" aria-label="Net follower gains per completed hour" aria-describedby="head-trend-summary"></svg><span id="head-trend-label" class="pb-trend-label">Hourly gains / 24 hours</span><span id="head-trend-summary" class="pb-trend-summary" hidden></span></div>
     </div>
     <span class="pb-next" aria-hidden="true"><span id="head-next"></span></span>
   </div>
@@ -233,6 +251,15 @@
 </main>
 </div>
 
+<dialog id="publish-dialog" class="publish-dialog" aria-labelledby="publish-title" aria-describedby="publish-description">
+  <div class="publish-heading"><span class="publish-icon" aria-hidden="true"><svg class="i" viewBox="0 0 16 16"><path d="m2 8 12-5.5L10.5 14 8 9.5z"/></svg></span><button type="button" id="publish-close" class="btn btn-ghost publish-close" aria-label="Close publishing confirmation">×</button></div>
+  <h2 id="publish-title">Publish this reply?</h2>
+  <p id="publish-description" class="publish-description">Your reply will be posted publicly on Facebook.</p>
+  <div class="publish-recipient"><span class="label">Replying to</span><strong id="publish-recipient"></strong></div>
+  <div class="publish-preview"><p id="publish-preview"></p></div>
+  <div class="publish-actions"><button type="button" id="publish-cancel" class="btn" autofocus>Keep editing</button><button type="button" id="publish-confirm" class="btn btn-accent"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m2 8 12-5.5L10.5 14 8 9.5z"/></svg>Publish reply</button></div>
+</dialog>
+
 <dialog id="cloudflare-dialog" class="cf-dialog" aria-labelledby="cf-title">
   <div class="drawer-head"><h2 id="cf-title">Cloudflare usage</h2><button type="button" id="close-cloudflare" class="btn btn-ghost">Close <kbd>Esc</kbd></button></div>
   <p class="hint">Daily database allowance for the Socialite Cloudflare account. Figures may take a few minutes to appear.</p>
@@ -247,5 +274,6 @@
     <p class="palette-foot mono"><kbd>↑</kbd><kbd>↓</kbd> choose <kbd>Enter</kbd> run <kbd>Esc</kbd> close</p>
   </div>
 </div>
+<div id="head-trend-tooltip" class="trend-tooltip" role="tooltip" hidden></div>
 </body>
 </html>

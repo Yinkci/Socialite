@@ -1,11 +1,21 @@
-import { withoutEmDashes, isOneWordReply, isSimpleAcknowledgment } from './reply-text.js';
+import { withoutEmDashes, isOneWordReply, isSimpleAcknowledgment, countWords } from './reply-text.js';
 import { ReplyMemory } from './memory.js';
 import { Reactions } from './reactions.js';
-const policySkipReason=(s,c)=>s.skipEmojiOnly&&s.replyPolicyPageId===s.pageId&&(c.source==='test'||c.page_id===s.pageId)&&!/[\p{L}\p{N}]/u.test(c.message||'')&&/\p{Extended_Pictographic}/u.test(c.message||'')?'Emoji-only reaction; this Page replies to meaningful life-lesson conversations, not standalone emoji engagement.':'';
+import { objectId, historyOf, resolveThread } from './threads.js';
+import { WINE_AND_SILENCE_PERSONALITY } from './personality-presets.js';
+const policySkipReason=(s,c)=>{
+  if(c.is_followup||c.manual_hold&&c.reply_decision!=='SKIP'||!(c.source==='test'||c.source==='facebook'&&(!c.page_id||c.page_id===s.pageId)))return '';
+  if(countWords(c.message)===1)return 'Single-word comment; emojis do not count as words. No automatic reply needed.';
+  return s.skipEmojiOnly&&s.replyPolicyPageId===s.pageId&&countWords(c.message)===0&&/\p{Extended_Pictographic}/u.test(c.message||'')?'Emoji-only reaction; this Page replies to meaningful life-lesson conversations, not standalone emoji engagement.':'';
+};
 const replyKey=text=>String(text||'').normalize('NFKC').toLocaleLowerCase().replace(/[^\p{L}\p{N}]/gu,'');
 export class Workflow {
   constructor(store,chatgpt,facebook) { this.store=store; this.chatgpt=chatgpt; this.facebook=facebook; this.busy=false; this.publishing=false; this.lastPublish=store.lastPublished(); this.memory=new ReplyMemory(store); this.reactions=new Reactions(store,facebook); this.liking=new Set(); }
   skipComment(c,reason){
+    if(c.is_followup){
+      this.store.update(c.id,{status:'pending',reply_decision:'REVIEW',draft:'',manual_hold:1,review:1,reason:'Follow-up needs your decision. '+reason,error:'',attempts:0});
+      this.store.log(`Follow-up held for approval for ${c.author}.`);return {ok:true,held:true};
+    }
     this.store.update(c.id,{status:'skipped',reply_decision:'SKIP',draft:'',manual_hold:1,review:1,reason,error:'',attempts:0});
     if(!c.reaction_selected&&c.reaction_applied==='NONE')this.store.update(c.id,{reaction_choice:'NONE'});
     this.store.log(`No reply needed for ${c.author}.`);return {ok:true,skipped:true};
@@ -20,14 +30,14 @@ export class Workflow {
     for(const c of this.store.db.prepare("SELECT * FROM comments WHERE cleared_at=0 AND status='pending' AND draft<>''").all())if(isOneWordReply(c.draft))this.blockOneWordReply(c,c.draft);
   }
   applyReplyPolicy(){
-    const s=this.store.settings();if(!s.skipEmojiOnly||s.replyPolicyPageId!==s.pageId)return;
-    for(const c of this.store.db.prepare("SELECT * FROM comments WHERE status IN ('queued','pending','error') AND manual_hold=0").all()){const reason=policySkipReason(s,c);if(reason)this.skipComment(c,reason);}
+    const s=this.store.settings();
+    for(const c of this.store.db.prepare("SELECT * FROM comments WHERE cleared_at=0 AND status IN ('queued','pending','error') AND (manual_hold=0 OR reply_decision='SKIP')").all()){const reason=policySkipReason(s,c);if(reason)this.skipComment(c,reason);}
   }
   recentPageReplies(c){
     const settings=this.store.settings();if(!settings.learningEnabled)return [];
     return this.store.db.prepare("SELECT draft FROM comments WHERE source='facebook' AND page_id=? AND status='published' AND id<>? AND draft<>'' ORDER BY COALESCE(NULLIF(published_at,0),updated_at) DESC LIMIT 6").all(settings.pageId,c.id).map(r=>r.draft);
   }
-  async generate(id, previousDraft, ownerInstructions, editingMode='improve', manualRequest=false) {
+  async generate(id, previousDraft, ownerInstructions, editingMode='improve', manualRequest=false, personalityPreset='') {
     const c=this.store.get(id);
     if(c?.cleared_at)throw new Error('This conversation was cleared.');
     if(!c)return;
@@ -36,6 +46,8 @@ export class Workflow {
     if(previousDraft!==undefined&&(typeof previousDraft!=='string'||previousDraft.length>1000))throw new Error('The previous reply must be text of at most 1000 characters.');
     if(ownerInstructions!==undefined&&(typeof ownerInstructions!=='string'||ownerInstructions.length>2000))throw new Error('Your AI instructions must be text of at most 2000 characters.');
     if(!['improve','grammar'].includes(editingMode))throw new Error('Choose Improve my idea or Correct grammar only.');
+    if(!['','wine-and-silence'].includes(personalityPreset))throw new Error('Unknown reply personality.');
+    if(personalityPreset&&(!manualRequest||editingMode==='grammar'))throw new Error('This personality is for manual reply generation.');
     const direction=ownerInstructions?.trim()||'', grammarOnly=editingMode==='grammar';
     if(grammarOnly&&(!direction||direction.length>1000))throw new Error('Text for grammar correction must contain 1-1000 characters.');
     if(!this.store.claim(id,c.status,'generating'))return;
@@ -44,18 +56,28 @@ export class Workflow {
       if(c.source==='facebook') {
         const latest=await this.facebook.current(c);
         c.message=latest.message||'';
+        if(latest.parent?.id&&objectId(latest.parent.id)!==objectId(c.post_id)){
+          c.is_followup=1;c.parent_id=latest.parent.id;
+          this.store.update(id,{is_followup:1,parent_id:c.parent_id,manual_hold:1,review:1});
+        }
+        if(c.is_followup&&!historyOf(c).length){
+          const thread=await resolveThread(this.facebook,c.parent_id,c.post_id,c.id);
+          if(!thread.eligible)throw Error('No previous Page reply could be verified in this thread. Review it on Facebook.');
+          Object.assign(c,thread);this.store.update(id,{thread_root:c.thread_root,thread_history:c.thread_history,manual_hold:1,review:1});
+        }
         c.context=await this.facebook.context(c);
         this.store.update(id,{message:c.message,context:c.context});
         if(!c.message.trim()) throw new Error('Comment has no text to reply to.');
       }
-      const policyReason=!manualRequest&&!grammarOnly&&!direction?policySkipReason(this.store.settings(),c):'';
+      const policyReason=!c.is_followup&&!manualRequest&&!grammarOnly&&!direction?policySkipReason(this.store.settings(),c):'';
       if(policyReason)return this.skipComment(this.store.get(id),policyReason);
       let history=[];try{history=JSON.parse(c.draft_history||'[]');}catch{}
       history=[...new Set([...(Array.isArray(history)?history.filter(x=>typeof x==='string'&&x.length<=1000):[]),c.draft,previousDraft].filter(Boolean))].slice(-8);
       const previousReplies=history.map(replyKey);
       let result;
       for(let attempt=1;attempt<=(!grammarOnly&&history.length?2:1);attempt++){
-        result=await this.chatgpt.generate(this.store.settings(),{...c,manualRequest,previousReplies:grammarOnly?[]:history,regenerationAttempt:attempt,ownerInstructions:direction,currentReply:previousDraft??c.draft,grammarOnly,replyMemory:grammarOnly?null:this.memory.forDraft(c),recentPageReplies:grammarOnly?[]:this.recentPageReplies(c)});
+        const settings=this.store.settings(),generationSettings=personalityPreset?{...settings,personality:WINE_AND_SILENCE_PERSONALITY}:settings;
+        result=await this.chatgpt.generate(generationSettings,{...c,personalityPreset,conversationHistory:historyOf(c),manualRequest,previousReplies:grammarOnly?[]:history,regenerationAttempt:attempt,ownerInstructions:direction,currentReply:previousDraft??c.draft,grammarOnly,replyMemory:grammarOnly?null:this.memory.forDraft(c),recentPageReplies:grammarOnly?[]:this.recentPageReplies(c)});
         result.reply=withoutEmDashes(result.reply);
         const current=this.store.get(id);
         if(current.status!=='generating'||current.message!==c.message)return;
@@ -69,8 +91,8 @@ export class Workflow {
       if(this.blockOneWordReply(current,result.reply))return {ok:true,skipped:this.store.get(id).status==='skipped'};
       const unclear=decision==='REVIEW';
       const sensitive=['GRIEF','POSSIBLE_DANGER'].includes(result.sensitive_context);
-      const review=unclear||sensitive||current.manual_hold||result.needs_review||!c.context||/refund|complaint|scam|broken|lawsuit|angry/i.test(c.message);
-      this.store.update(id,{draft:result.reply,reply_decision:decision,manual_hold:sensitive||unclear?1:current.manual_hold,draft_history:JSON.stringify([...new Set([...history,result.reply])].slice(-8)),review:review?1:0,reason:result.reason||(unclear?'Comment meaning is unclear; personal approval is required.':!c.context?'Post context is missing.':''),status:'pending',error:'',attempts:0});
+      const review=current.is_followup||unclear||sensitive||current.manual_hold||result.needs_review||!c.context||/refund|complaint|scam|broken|lawsuit|angry/i.test(c.message);
+      this.store.update(id,{draft:result.reply,reply_decision:decision,manual_hold:current.is_followup||sensitive||unclear?1:current.manual_hold,draft_history:JSON.stringify([...new Set([...history,result.reply])].slice(-8)),review:review?1:0,reason:result.reason||(unclear?'Comment meaning is unclear; personal approval is required.':!c.context?'Post context is missing.':''),status:'pending',error:'',attempts:0});
       this.store.update(id,{reaction_choice:'LIKE',reaction_selected:1});
       this.store.log(`Draft ready for ${c.author}.`);
       return {ok:true};
@@ -94,7 +116,7 @@ export class Workflow {
     if(!c||c.status!=='pending') throw new Error('Only pending drafts can be published.');
     if(c.source==='facebook'&&c.page_id&&c.page_id!==settings.pageId)throw new Error('This comment belongs to a different Page. Reconnect its original Page before publishing.');
     if(automatic){const reason=policySkipReason(settings,c);if(reason)return this.skipComment(c,reason);}
-    if(automatic&&(settings.mode==='approval'||c.reply_decision!=='REPLY'||c.manual_hold||(settings.mode==='hybrid'&&c.review)))return;
+    if(automatic&&(c.is_followup||settings.mode==='approval'||c.reply_decision!=='REPLY'||c.manual_hold||(settings.mode==='hybrid'&&c.review)))return;
     const publishKind=automatic?'automatic':typeof editedDraft==='string'&&editedDraft.trim()!==c.draft.trim()?'edited':'approved';
     if(typeof editedDraft==='string') {
       if(!editedDraft.trim()||editedDraft.length>1000) throw new Error('Reply must contain 1–1000 characters.');
@@ -117,9 +139,17 @@ export class Workflow {
     try {
       await this.facebook.verify();
       const latest=await this.facebook.current(c);
+      if(latest.parent?.id&&objectId(latest.parent.id)!==objectId(c.post_id))this.store.update(id,{is_followup:1,parent_id:latest.parent.id,manual_hold:1,review:1});
       if(latest.message!==c.message) {this.store.update(id,{message:latest.message||'',status:'queued',draft:'',error:'Comment changed. A fresh draft is required.'});return;}
       const latestSettings=this.store.settings(), latestDraft=this.store.get(id);
-      if(automatic&&(latestSettings.mode==='approval'||latestDraft.reply_decision!=='REPLY'||latestDraft.manual_hold||(latestSettings.mode==='hybrid'&&latestDraft.review)))throw new Error('Publishing preferences changed. This reply now needs your approval.');
+      if(automatic&&(latestDraft.is_followup||latestSettings.mode==='approval'||latestDraft.reply_decision!=='REPLY'||latestDraft.manual_hold||(latestSettings.mode==='hybrid'&&latestDraft.review)))throw new Error('This reply needs your approval.');
+      if(latestDraft.is_followup){
+        const existing=await this.facebook.existingReply(latestDraft);
+        if(existing){
+          this.store.update(id,{status:'published',reply_id:existing.id,draft:existing.message||'',published_at:Date.parse(existing.created_time)||Date.now(),publish_kind:'external',error:'',like_after_publish:0});
+          this.store.log(`Follow-up for ${c.author} was already answered on Facebook. No duplicate reply was sent.`);return;
+        }
+      }
       this.checkPublishTiming(c,latestSettings);
       this.lastPublish=Date.now(); sent=true;
       const reply=await this.facebook.publish(c);
@@ -146,9 +176,9 @@ export class Workflow {
     const c=this.store.needsPost();
     if(!c||!this.facebook.configured()) return;
     try {
-      const p=await this.facebook.post(c.post_id);
-      this.store.update(c.id,{post_url:p.url||c.post_url,post_image:p.image,context:p.caption||c.context,post_loaded:1});
-    } catch { this.store.update(c.id,{post_loaded:1}); }
+      const p=this.store.savedPost(c)||await this.facebook.post(c.post_id);
+      this.store.savePost(c,p);
+    } catch { this.store.savePost(c,{}); }
   }
   async tick() {
     // Live Off: nothing automatic runs (no drafts, posts or Likes).

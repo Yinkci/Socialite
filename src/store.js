@@ -21,16 +21,22 @@ export class Store {
       CREATE TABLE IF NOT EXISTS activity (id INTEGER PRIMARY KEY, at INTEGER, message TEXT);
     `);
     // Post preview columns, added after the first release.
-    for(const col of ["post_url TEXT DEFAULT ''","post_image TEXT DEFAULT ''","post_loaded INTEGER DEFAULT 0","reaction_choice TEXT DEFAULT 'NONE'","reaction_selected INTEGER DEFAULT 0","reaction_status TEXT DEFAULT 'pending'","reaction_applied TEXT DEFAULT 'NONE'","reaction_error TEXT DEFAULT ''","manual_hold INTEGER DEFAULT 0","page_id TEXT DEFAULT ''","draft_history TEXT DEFAULT '[]'","publish_kind TEXT DEFAULT ''","published_at INTEGER DEFAULT 0","pending_at INTEGER DEFAULT 0","attention_at INTEGER DEFAULT 0","cleared_at INTEGER DEFAULT 0","like_after_publish INTEGER DEFAULT 0","reply_decision TEXT DEFAULT 'REVIEW'"]) {
+    for(const col of ["post_url TEXT DEFAULT ''","post_image TEXT DEFAULT ''","post_loaded INTEGER DEFAULT 0","reaction_choice TEXT DEFAULT 'NONE'","reaction_selected INTEGER DEFAULT 0","reaction_status TEXT DEFAULT 'pending'","reaction_applied TEXT DEFAULT 'NONE'","reaction_error TEXT DEFAULT ''","manual_hold INTEGER DEFAULT 0","page_id TEXT DEFAULT ''","draft_history TEXT DEFAULT '[]'","publish_kind TEXT DEFAULT ''","published_at INTEGER DEFAULT 0","pending_at INTEGER DEFAULT 0","attention_at INTEGER DEFAULT 0","cleared_at INTEGER DEFAULT 0","like_after_publish INTEGER DEFAULT 0","reply_decision TEXT DEFAULT 'REVIEW'","author_id TEXT DEFAULT ''","parent_id TEXT DEFAULT ''","thread_root TEXT DEFAULT ''","is_followup INTEGER DEFAULT 0","thread_history TEXT DEFAULT '[]'"]) {
       try { this.db.exec(`ALTER TABLE comments ADD COLUMN ${col}`); } catch { /* already exists */ }
     }
     // Background work must seek active rows rather than scan the growing published history.
     this.db.exec(`
       CREATE INDEX IF NOT EXISTS comments_active_status ON comments(cleared_at,status,created_at);
       CREATE INDEX IF NOT EXISTS comments_visible_created ON comments(cleared_at,created_at DESC);
+      CREATE INDEX IF NOT EXISTS comments_auto_visible ON comments(created_at DESC) WHERE cleared_at=0 AND source='facebook' AND status='published' AND publish_kind='automatic';
+      CREATE INDEX IF NOT EXISTS comments_published_visible ON comments(COALESCE(NULLIF(published_at,0),updated_at) DESC) WHERE cleared_at=0 AND source='facebook' AND status='published';
       CREATE INDEX IF NOT EXISTS comments_status ON comments(status);
       CREATE INDEX IF NOT EXISTS comments_like_queue ON comments(cleared_at,status) WHERE like_after_publish=1;
       CREATE INDEX IF NOT EXISTS comments_post_queue ON comments(created_at DESC) WHERE source='facebook' AND cleared_at=0 AND post_loaded=0 AND post_id<>'' AND status NOT IN ('removed','rejected','skipped');
+      CREATE INDEX IF NOT EXISTS comments_post_preview_queue ON comments(created_at DESC) WHERE source='facebook' AND cleared_at=0 AND post_loaded=0 AND post_id<>'' AND status NOT IN ('removed','rejected');
+      CREATE INDEX IF NOT EXISTS comments_post_preview_lookup ON comments(page_id,post_id,post_loaded) WHERE source='facebook';
+      CREATE INDEX IF NOT EXISTS comments_reply_lookup ON comments(page_id,post_id,reply_id);
+      CREATE INDEX IF NOT EXISTS comments_thread ON comments(page_id,thread_root,created_at);
       CREATE INDEX IF NOT EXISTS comments_received ON comments(source,created_at);
       CREATE INDEX IF NOT EXISTS comments_pending_time ON comments(source,pending_at);
       CREATE INDEX IF NOT EXISTS comments_published_time ON comments(source,status,published_at,updated_at);
@@ -56,6 +62,7 @@ export class Store {
   settings() { const {paused,...saved}=JSON.parse(this.db.prepare('SELECT value FROM settings WHERE id=1').get().value);return { ...defaults, ...saved }; }
   saveSettings(s) { const {paused,...preferences}=s;this.db.prepare('UPDATE settings SET value=? WHERE id=1').run(JSON.stringify(preferences)); }
   list() { return this.db.prepare('SELECT * FROM comments WHERE cleared_at=0 ORDER BY created_at DESC LIMIT 300').all(); }
+  listAutomatic() { return this.db.prepare("SELECT * FROM comments WHERE cleared_at=0 AND source='facebook' AND status='published' AND publish_kind='automatic' ORDER BY created_at DESC LIMIT 300").all(); }
   kpiTimes(since=Date.now()-86400e3) {
     const times=(column,condition='')=>this.db.prepare(`SELECT ${column} AS at FROM comments WHERE source='facebook' AND ${column}>=? ${condition}`).all(since).map(r=>r.at);
     const published=this.db.prepare("SELECT CASE WHEN published_at>0 THEN published_at ELSE updated_at END AS at, publish_kind FROM comments WHERE source='facebook' AND status='published' AND (published_at>=? OR (published_at=0 AND updated_at>=?))").all(since,since);
@@ -96,13 +103,13 @@ export class Store {
   get(id) { return this.db.prepare('SELECT * FROM comments WHERE id=?').get(id); }
   add(c) {
     const now = Date.now();
-    const result = this.db.prepare('INSERT OR IGNORE INTO comments(id,post_id,author,message,context,source,post_url,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)')
-      .run(c.id, c.post_id || '', c.author || 'Facebook user', c.message, c.context || '', c.source, c.post_url || '', now, now);
-    if(result.changes===1&&c.source==='facebook')this.db.prepare('UPDATE comments SET page_id=? WHERE id=?').run(this.settings().pageId,c.id);
+    const pageId=c.source==='facebook'?this.settings().pageId:'';
+    const result = this.db.prepare('INSERT OR IGNORE INTO comments(id,post_id,author,message,context,source,post_url,created_at,updated_at,page_id,author_id,parent_id,thread_root,is_followup,thread_history,manual_hold,review,status,error) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+      .run(c.id,c.post_id||'',c.author||'Facebook user',c.message,c.context||'',c.source,c.post_url||'',now,now,pageId,c.author_id||'',c.parent_id||'',c.thread_root||'',c.is_followup?1:0,c.thread_history||'[]',c.is_followup?1:0,1,c.status||'queued',c.error||'');
     return result.changes === 1;
   }
   update(id, fields) {
-    const allowed = ['message','context','post_url','post_image','post_loaded','status','draft','review','reason','error','reply_id','attempts','next_at','reaction_choice','reaction_selected','reaction_status','reaction_applied','reaction_error','manual_hold','draft_history','publish_kind','published_at','like_after_publish','reply_decision'];
+    const allowed = ['message','context','post_url','post_image','post_loaded','status','draft','review','reason','error','reply_id','attempts','next_at','reaction_choice','reaction_selected','reaction_status','reaction_applied','reaction_error','manual_hold','draft_history','publish_kind','published_at','like_after_publish','reply_decision','parent_id','thread_root','is_followup','thread_history'];
     const updates=Object.fromEntries(Object.entries(fields).filter(([key])=>allowed.includes(key)));
     const now=Date.now();
     if('status' in updates||'reaction_status' in updates){
@@ -123,9 +130,19 @@ export class Store {
     const now=Date.now();
     return this.db.prepare('UPDATE comments SET status=?, updated_at=?, pending_at=CASE WHEN ?=\'pending\' THEN ? ELSE pending_at END, attention_at=CASE WHEN ? IN (\'error\',\'uncertain\') THEN ? ELSE attention_at END WHERE id=? AND status=?').run(to,now,to,now,to,now,id,from).changes===1;
   }
-  needsPost() { return this.db.prepare("SELECT * FROM comments WHERE source='facebook' AND cleared_at=0 AND post_loaded=0 AND post_id<>'' AND status NOT IN ('removed','rejected','skipped') ORDER BY created_at DESC LIMIT 1").get(); }
+  threadRecord(id,postId) {
+    const canonical=String(postId).split('_').pop()+'_'+String(id).split('_').pop();
+    const bare=String(id).split('_').pop();
+    return this.db.prepare('SELECT * FROM comments WHERE page_id=? AND post_id=? AND (id IN (?,?,?) OR reply_id IN (?,?,?)) LIMIT 1').get(this.settings().pageId,postId,id,canonical,bare,id,canonical,bare);
+  }
+  needsPost() { return this.db.prepare("SELECT * FROM comments WHERE source='facebook' AND cleared_at=0 AND post_loaded=0 AND post_id<>'' AND status NOT IN ('removed','rejected') AND (page_id='' OR page_id=?) ORDER BY created_at DESC LIMIT 1").get(this.settings().pageId); }
+  savedPost(c) { return this.db.prepare("SELECT context AS caption,post_url AS url,post_image AS image FROM comments WHERE source='facebook' AND page_id=? AND post_id=? AND post_loaded=1 AND context<>'' ORDER BY created_at DESC LIMIT 1").get(c.page_id,c.post_id); }
+  savePost(c,p) {
+    this.db.prepare("UPDATE comments SET context=CASE WHEN ?<>'' THEN ? ELSE context END,post_url=CASE WHEN ?<>'' THEN ? ELSE post_url END,post_image=CASE WHEN ?<>'' THEN ? ELSE post_image END,post_loaded=1,updated_at=? WHERE source='facebook' AND page_id=? AND post_id=? AND cleared_at=0 AND post_loaded=0 AND status NOT IN ('removed','rejected')")
+      .run(p.caption||'',p.caption||'',p.url||'',p.url||'',p.image||'',p.image||'',Date.now(),c.page_id,c.post_id);
+  }
   queued() { return this.db.prepare("SELECT * FROM comments WHERE cleared_at=0 AND status='queued' AND next_at<=? ORDER BY created_at LIMIT 1").get(Date.now()); }
-  nextPublish(mode) { return this.db.prepare("SELECT * FROM comments WHERE cleared_at=0 AND status='pending' AND source='facebook' AND error='' AND manual_hold=0 AND reply_decision='REPLY' AND created_at<=? AND (?='automatic' OR review=0) ORDER BY created_at LIMIT 1").get(Date.now()-this.settings().commentDelaySeconds*1000,mode); }
+  nextPublish(mode) { return this.db.prepare("SELECT * FROM comments WHERE cleared_at=0 AND status='pending' AND source='facebook' AND error='' AND manual_hold=0 AND is_followup=0 AND reply_decision='REPLY' AND created_at<=? AND (?='automatic' OR review=0) ORDER BY created_at LIMIT 1").get(Date.now()-this.settings().commentDelaySeconds*1000,mode); }
   lastPublished() { return this.db.prepare("SELECT MAX(updated_at) AS at FROM comments WHERE status='published'").get().at||0; }
   hasActiveFacebook() { return !!this.db.prepare("SELECT id FROM comments WHERE cleared_at=0 AND source='facebook' AND (status NOT IN ('published','removed','rejected','skipped') OR reaction_status IN ('applying','uncertain')) LIMIT 1").get(); }
   log(message) { this.db.prepare('INSERT INTO activity(at,message) VALUES(?,?)').run(Date.now(),message); }

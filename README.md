@@ -71,3 +71,23 @@ Both apps have a **Live** switch at the top of the dashboard. Only one app is li
 - **Hugging Face:** about 5 minutes of ZeroGPU time a day, roughly 50-100 drafts. A sleeping Space takes a few minutes to wake up for the first draft.
 - **Cloudflare:** 100,000 requests a day and 100,000 database row writes a day.
 - **Facebook:** the Page token expires. Paste a new one in Connections → Facebook Page.
+
+## Follow-up conversations
+
+New customer replies in a thread where the Page has replied are captured from the existing signed Facebook feed webhook. This includes Page replies written directly on Facebook. The original comment and prior thread messages are shown with the follow-up and passed to AI as untrusted conversation context. Page-authored messages never become inbound reply jobs.
+
+All follow-ups have a persistent approval lock. Neither Hybrid nor Automatic mode can publish them, even after regeneration, edits, or a restart. If AI recommends no reply, the item still awaits the owner?s decision. Before manual publication, Socialite checks for an existing Page reply to that follow-up and records it instead of sending a duplicate. Thread history is fetched only on arrival or when missing; it is not polled with the dashboard. Old follow-ups ignored before this feature are not automatically backfilled.
+
+## Wine and Silence regeneration
+
+The **Wine & Silence** button beside **Regenerate reply** uses the owner-provided personality and examples in `src/personality-presets.js` for that draft. It uses the post, comment, prior drafts, and available thread context, then holds the result for approval. The saved personality in Voice & rules is not rewritten. Both ChatGPT and Hugging Face receive this preset through the shared prompt builder.
+
+### Public dashboard
+
+Signed-out visitors see all real published Facebook replies (automatic, owner-approved, edited and replies recorded from Facebook) and aggregate dashboard statistics. They can read conversations, but navigation to settings, other filters, generation, publishing and all changes require the owner login. The public API uses explicit field allowlists: unpublished comments, private prompts, review notes, credentials, account email and webhook verification tokens are excluded. Owner APIs still require a valid session; mutations also require the correct origin and CSRF token. Visitors refresh once per minute while visible, using a shared cached snapshot and conditional requests.
+
+Follower readings are stored with the Page on the server during the existing Facebook refresh. Owner and public dashboards use the same rolling 24-hour baseline and chart. A logged-in browser can transfer its legacy readings once through a session- and CSRF-protected endpoint; visitors cannot write readings. Shorter histories show the shared observed change as "since tracking"; the badge switches to "in 24h" once a reading from at least 24 hours ago is available. Legacy transfers preserve shorter histories, tolerate a simultaneous Facebook refresh using a saved reading, and surface transfer failures to the owner. No extra Facebook polling is added.
+
+All generated reply styles share a caption-meaning rule. Replies preserve negation and qualifiers, avoid reversing the caption with guarantees or expectations of reciprocity, and acknowledge differing personal experiences without forcing agreement. Short acknowledgments do not require added advice or a life lesson. Grammar-only editing continues to preserve the owner's supplied meaning. Regression fixtures are in test/fixtures/reply-meaning-cases.js; live synthetic generations tested both normal and Wine & Silence styles without creating or publishing comments.
+
+Single-word top-level comments automatically move to No reply needed before AI generation or automatic publication, in every publishing mode. Emojis, flags, skin-tone modifiers and numeric keycaps do not count as words. The owner can still manually generate a held draft. Follow-ups always remain under the existing approval rule; already published replies keep their publication history.
