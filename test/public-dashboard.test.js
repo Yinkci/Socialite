@@ -60,7 +60,7 @@ test('real anonymous routes cannot write, access owner state, memory, credential
       assert.equal(response.status,401,path);
     }
   }
-  for(const path of ['/api/state','/api/memory','/api/cloudflare'])assert.equal((await a.fetch(request(path))).status,401,path);
+  for(const path of ['/api/state','/api/memory','/api/cloudflare','/api/earnings'])assert.equal((await a.fetch(request(path))).status,401,path);
   for(const path of ['/internal/import','/internal/import-chatgpt','/internal/wake'])assert.equal((await a.fetch(request(path,{method:'POST',body:'{}'}))).status,404,path);
   assert.equal(a.store.db.revision,before);assert.equal(a.store.get('automatic').draft,'Public reply');
 });
@@ -76,6 +76,17 @@ test('valid owner sessions retain access; expired sessions and missing CSRF cann
   assert.equal((await a.fetch(post('owner-csrf'))).status,200);assert.equal(a.store.settings().mode,'hybrid');
   a.ctx.storage.kv.put('session:'+sha256(sid),{csrf:'owner-csrf',expires:Date.now()-1});
   assert.equal((await a.fetch(post('owner-csrf'))).status,401);
+});
+
+test('earnings requires a valid session and is never included in the public snapshot',async t=>{
+  const a=app(t),sid='earnings-owner-session-long-enough';let calls=0;
+  a.earnings.read=async()=>{calls++;return {available:true,amount:987.65,currency:'USD',values:[]};};
+  a.ctx.storage.kv.put('session:'+sha256(sid),{csrf:'csrf',expires:Date.now()+60000});
+  const response=await a.fetch(request('/api/earnings',{headers:{cookie:'sid='+sid}}));
+  assert.equal(response.status,200);assert.equal((await response.json()).amount,987.65);assert.equal(response.headers.get('cache-control'),'no-store');assert.equal(calls,1);
+  const publicResponse=await a.fetch(request('/api/public-state'));assert.ok(!JSON.stringify(await publicResponse.json()).includes('987.65'));assert.equal(calls,1);
+  a.ctx.storage.kv.put('session:'+sha256(sid),{expires:Date.now()-1});
+  assert.equal((await a.fetch(request('/api/earnings',{headers:{cookie:'sid='+sid}}))).status,401);assert.equal(calls,1);
 });
 
 
@@ -94,7 +105,7 @@ test('authenticated legacy transfer shares +590 with visitors without exposing a
   a.vault.set('facebookToken','test-token');
   a.store.saveSettings({...a.store.settings(),pageId:'123',graphVersion:'v26.0',facebookPage:{id:'123',name:'Page',followersCount:8971,followersUpdatedAt:now}});
   a.ctx.storage.kv.put('session:'+sha256(sid),{csrf:'owner-csrf',expires:now+60000});
-  const input={pageId:'123',readings:[[now-25*3600e3,8381],[now,8971]]};
+  const input={pageId:'123',readings:[[now-24*3600e3,8381],[now,8971]]};
   const options={method:'POST',headers:{origin:'https://socialite.test','Content-Type':'application/json','X-CSRF-Token':'owner-csrf',cookie:'sid='+sid},body:JSON.stringify(input)};
   assert.equal((await a.fetch(request('/api/facebook/follower-history',{...options,headers:{...options.headers,cookie:''}}))).status,401);
   assert.equal((await a.fetch(request('/api/facebook/follower-history',options))).status,200);
@@ -115,4 +126,17 @@ test('real transfer accepts short history after Facebook refreshes and returns a
   assert.equal(result.followersCount,8974);assert.equal(result.followersObservedChange,593);assert.equal(result.followersDelta24h,null);
   const publicData=await (await a.fetch(request('/api/public-state'))).json();
   assert.equal(publicData.facebook.followersObservedChange,593);assert.equal(publicData.facebook.followersCount,8974);
+});
+
+test('replacing a token preserves history for the same Page and switching Pages clears it',async t=>{
+  const a=app(t),now=Date.now(),sid='owner-preserve-follower-history';
+  const page={id:'123',name:'Page',followersCount:10176,followersUpdatedAt:now,followersHistory:[[now-3600e3,10170],[now,10176]]};
+  a.store.saveSettings({...a.store.settings(),pageId:'123',graphVersion:'v26.0',live:true,facebookPage:page});a.vault.set('facebookToken','old-token');
+  a.ctx.storage.kv.put('session:'+sha256(sid),{csrf:'csrf',expires:now+60000});
+  let atVerify;a.facebook.verify=async()=>{atVerify=a.store.settings().facebookPage;return {id:'123',name:'Page'};};
+  const save=input=>a.fetch(request('/api/facebook/save',{method:'POST',headers:{cookie:'sid='+sid,origin:'https://socialite.test','Content-Type':'application/json','X-CSRF-Token':'csrf'},body:JSON.stringify(input)}));
+  assert.equal((await save({pageId:'123',pageToken:'replacement-token'})).status,200);
+  assert.deepEqual(atVerify,page);assert.deepEqual(a.store.settings().facebookPage,page);assert.equal(a.vault.get('facebookToken'),'replacement-token');
+  a.store.saveSettings({...a.store.settings(),live:false});
+  assert.equal((await save({pageId:'456',pageToken:'other-page-token'})).status,200);assert.equal(a.store.settings().facebookPage,null);
 });

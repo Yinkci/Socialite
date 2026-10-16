@@ -16,6 +16,7 @@ import { DashboardCache } from './dashboard-cache.js';
 import { ensureWorkAlarm } from './alarm.js';
 import { CloudflareUsage } from './cloudflare-usage.js';
 import { publicDashboard } from './public-dashboard.js';
+import { Earnings } from './earnings.js';
 import { followerMetrics, importFollowerReadings } from './followers.js';
 
 const TICK_MS=15000, STATS_MS=5*60*1000, SESSION_MS=30*24*60*60*1000;
@@ -61,6 +62,7 @@ export class SocialiteApp extends DurableObject {
     const ai=new AIRouter(this.store,this.chatgpt,this.huggingface);
     this.ai=ai;
     this.facebook=new Facebook(this.store,this.vault);
+    this.earnings=new Earnings(this.facebook);
     this.workflow=new Workflow(this.store,ai,this.facebook);
     this.live=new LiveSwitch(this.store,this.facebook,{ownUrl:async()=>this.webhookUrl(),isOwn:url=>url===this.webhookUrl()});
   }
@@ -112,6 +114,7 @@ export class SocialiteApp extends DurableObject {
         return json(200,snapshot,{ETag:etag});
       }
       if(!session) return json(401,{error:'Please sign in.'});
+      if(request.method==='GET'&&path==='/api/earnings')return json(200,await this.earnings.read(Date.now(),url.searchParams.get('refresh')==='1'));
       if(request.method==='GET'&&path==='/api/cloudflare')return json(200,await this.cloudflareUsage.read());
       if(request.method==='GET'&&path==='/api/state') {
         // SQL mutations, credentials, webhook status or a new minute invalidate the shared snapshot.
@@ -245,7 +248,8 @@ export class SocialiteApp extends DurableObject {
       for(const [field,key] of [['pageToken','facebookToken'],['appSecret','appSecret']]) {
         if(input[field]) {if(typeof input[field]!=='string'||input[field].length>5000) throw new Error('Invalid credential');vault.set(key,input[field].trim());}
       }
-      store.saveSettings({...next,...(input.pageToken||next.pageId!==store.settings().pageId?{facebookPage:null}:{})});
+      // Replacing a token for the same Page must preserve its recorded history.
+      store.saveSettings({...next,...(next.pageId!==store.settings().pageId?{facebookPage:null}:{})});
       if(this.live.on()&&facebook.configured())await facebook.verify(true).catch(()=>{});
       return {ok:true};
     }

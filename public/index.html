@@ -76,7 +76,7 @@
         <span class="pb-avatar" aria-hidden="true"><img id="head-logo" src="/page-logo.jpg" alt="" width="48" height="48" hidden><span id="head-initial">?</span></span>
         <div class="pb-name">
           <strong id="head-page">Facebook Page not connected</strong>
-          <span class="pb-sub"><span id="head-dot" class="dot" aria-hidden="true"></span><span id="head-sync">Not connected</span></span>
+          <span class="pb-sub"><span id="head-dot" class="dot" aria-hidden="true"></span><span id="head-sync">Not connected</span><span id="head-monetization" class="pb-monetization" hidden>Monetized</span></span>
         </div>
       </div>
       <div class="pb-meta"><span id="head-updated" class="pb-time mono"></span><span id="head-age" class="pb-age" hidden></span></div>
@@ -106,8 +106,9 @@
     <div class="kpis" aria-label="Overview">
       <button id="show-new-comments" data-filter="new" aria-pressed="true" class="kpi kpi-go kpi-new" type="button" title="Comments waiting for a draft, your approval, or an error check"><span class="kpi-label">New comments</span><strong id="stat-new" class="kpi-n mono" aria-live="polite" aria-atomic="true">0</strong><span id="delta-new" class="kpi-delta mono"></span><svg id="spark-new" class="spark" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
       <button data-filter="pending" aria-pressed="false" type="button" class="kpi kpi-go"><span class="kpi-label">Awaiting approval</span><strong id="stat-pending" class="kpi-n mono">0</strong><span id="delta-pending" class="kpi-delta mono"></span><svg id="spark-pending" class="spark" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
-      <button data-filter="published" aria-pressed="false" type="button" class="kpi kpi-go"><span class="kpi-label">Published replies</span><strong id="stat-published" class="kpi-n mono">0</strong><span id="delta-published" class="kpi-delta mono"></span><svg id="spark-published" class="spark spark-ok" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
+      <button data-filter="published" aria-pressed="false" type="button" class="kpi kpi-go"><span class="kpi-label">Published</span><strong id="stat-published" class="kpi-n mono">0</strong><span id="delta-published" class="kpi-delta mono"></span><svg id="spark-published" class="spark spark-ok" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
       <button data-filter="automatic" aria-pressed="false" type="button" class="kpi kpi-go kpi-auto"><span class="kpi-label">Automatically published</span><strong id="stat-auto" class="kpi-n mono">0</strong><span id="delta-auto" class="kpi-delta mono"></span><svg id="spark-auto" class="spark spark-ok" viewBox="0 0 96 24" aria-hidden="true"></svg></button>
+      <button type="button" id="earnings-card" class="kpi kpi-money" hidden aria-haspopup="dialog" aria-controls="earnings-dialog" aria-label="Approximate earnings. Open earnings details." data-status="loading"><span class="money-heading"><span class="money-label"><svg class="money-coin" viewBox="0 0 20 20" aria-hidden="true"><circle cx="10" cy="10" r="8"/><path d="M12.5 7.5c-1-1.5-5-1.1-5 .8 0 2.1 5 1.3 5 3.4 0 1.9-4 2.3-5 .8M10 4.5v11"/></svg>Earnings</span><svg class="money-arrow" viewBox="0 0 16 16" aria-hidden="true"><path d="M4 12 12 4M4 4h8v8"/></svg></span><strong id="earnings-total" class="money-total mono">—</strong><span class="money-foot"><span id="earnings-month">This month · Estimate</span><svg viewBox="0 0 16 16" aria-hidden="true"><rect x="4" y="7" width="8" height="6" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/></svg></span></button>
       <button type="button" id="open-cloudflare" class="kpi kpi-cloudflare" aria-haspopup="dialog" aria-controls="cloudflare-dialog"><span class="cf-head"><span>Cloudflare</span><span id="cf-status" class="cf-status">Loading</span></span><span class="cf-row"><span>Reads</span><strong id="cf-reads" class="mono">—</strong></span><span class="cf-row"><span>Writes</span><strong id="cf-writes" class="mono">—</strong></span><span id="cf-reset" class="cf-reset mono">Resets at 8 AM SGT</span></button>
     </div>
 
@@ -258,6 +259,15 @@
   <div class="publish-recipient"><span class="label">Replying to</span><strong id="publish-recipient"></strong></div>
   <div class="publish-preview"><p id="publish-preview"></p></div>
   <div class="publish-actions"><button type="button" id="publish-cancel" class="btn" autofocus>Keep editing</button><button type="button" id="publish-confirm" class="btn btn-accent"><svg class="i" viewBox="0 0 16 16" aria-hidden="true"><path d="m2 8 12-5.5L10.5 14 8 9.5z"/></svg>Publish reply</button></div>
+</dialog>
+
+<dialog id="earnings-dialog" class="earnings-dialog" aria-labelledby="earnings-title">
+  <div class="drawer-head"><h2 id="earnings-title">Approximate earnings</h2><button type="button" id="close-earnings" class="btn btn-ghost">Close <kbd>Esc</kbd></button></div>
+  <div class="earnings-hero"><span id="earnings-period" class="hint">This month</span><strong id="earnings-detail-total" class="mono">—</strong><span class="earnings-private">Private · Only visible when signed in</span></div>
+  <div class="earnings-chart-heading"><h3>Daily earnings</h3><span class="hint">Reported by Meta</span></div>
+  <div id="earnings-days" class="earnings-days"></div>
+  <p id="earnings-status" class="hint" role="status">Loading earnings…</p>
+  <div class="earnings-footer"><p class="hint">Estimates may change before payout.<br>Checks for updates every 5 minutes.</p><button id="earnings-refresh" class="btn" type="button">Check again</button></div>
 </dialog>
 
 <dialog id="cloudflare-dialog" class="cf-dialog" aria-labelledby="cf-title">

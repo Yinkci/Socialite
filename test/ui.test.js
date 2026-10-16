@@ -17,12 +17,15 @@ async function setup(t,comments=[],guest=false) {
   Object.defineProperty(w.document,'hidden',{value:false,configurable:true});
   w.__stateRequests=[];
   w.__cloudflareRequests=0;
+  w.__earningsRequests=0;
+  w.__earnings={available:true,amount:32,currency:'USD',endAt:Date.now(),updatedAt:Date.now(),values:[{endAt:Date.now(),amount:1.2}]};
   w.__cloudflareUsage={available:true,reads:170113,writes:656,readLimit:5000000,writeLimit:100000,updatedAt:Date.now(),resetAt:Math.floor(Date.now()/86400e3)*86400e3+86400e3};
   w.HTMLDialogElement.prototype.showModal=function(){this.open=true;if(this.id==='publish-dialog'&&w.__autoPublish)queueMicrotask(()=>w.document.getElementById('publish-confirm').click());};
   w.HTMLDialogElement.prototype.close=function(value){if(!this.open)return;if(value!==undefined)this.returnValue=value;this.open=false;this.dispatchEvent(new w.Event('close'));};
   w.setInterval=fn=>{w.__poll=fn;};
   w.HTMLElement.prototype.scrollIntoView=()=>{};
   w.fetch=async(path,options)=>{
+    if(path.startsWith('/api/earnings')){w.__earningsRequests++;return {ok:true,json:async()=>structuredClone(w.__earnings)};}
     if(path==='/api/cloudflare'){w.__cloudflareRequests++;return {ok:true,json:async()=>structuredClone(w.__cloudflareUsage)};}
     if(path.startsWith('/api/memory?')){const offset=Number(new URL(path,'http://127.0.0.1:8787').searchParams.get('offset'));const rows=w.__memoryRows||[];return {ok:true,json:async()=>({offset,total:rows.length,rows:rows.slice(offset,offset+20)})};}
     if(path==='/api/state'&&guest)return {status:401,ok:false};
@@ -50,6 +53,52 @@ async function setup(t,comments=[],guest=false) {
   return {w,data,calls,$:s=>w.document.querySelector(s),input:(element,value)=>{element.value=value;element.dispatchEvent(new w.Event('input',{bubbles:true}));}};
 }
 const settle=()=>new Promise(resolve=>setImmediate(resolve));
+
+test('earnings loads only for owners, is cached, and is cleared on visitor fallback',async t=>{
+  const s=await setup(t);await s.w.__poll();await settle();
+  assert.equal(s.$('#earnings-card').hidden,false);assert.match(s.$('#earnings-total').textContent,/\$32\.00/);assert.equal(s.$('.earnings-day').getAttribute('aria-label').includes('1.20'),true);
+  assert.equal(s.w.__earningsRequests,1);await s.w.__poll();await settle();assert.equal(s.w.__earningsRequests,1);
+  s.data.readOnly=true;await s.w.__poll();await settle();
+  assert.equal(s.$('#earnings-card').hidden,true);assert.equal(s.$('#earnings-total').textContent,'—');assert.equal(s.$('#earnings-days').children.length,0);assert.equal(s.w.__earningsRequests,1);
+  const guest=await setup(t,[],true);await settle();assert.equal(guest.w.__earningsRequests,0);assert.equal(guest.$('#earnings-card').hidden,true);
+});
+
+test('unavailable earnings shows a helpful message rather than zero',async t=>{
+  const s=await setup(t);await settle();s.w.__earnings={available:false,error:'Check read_insights permission.'};s.data.settings.pageId='456';
+  await s.w.__poll();await settle();assert.equal(s.$('#earnings-total').textContent,'—');assert.match(s.$('#earnings-status').textContent,/read_insights/);assert.equal(s.$('#earnings-days').children.length,0);
+});
+
+test('earnings identifies expired tokens and retains the last fetched amount until a successful refresh',async t=>{
+  const s=await setup(t);await s.w.__poll();await settle();
+  s.w.__earnings={available:false,errorCode:190,error:'Your Facebook Page token has expired or is invalid. Update it in Connections.'};
+  s.$('#earnings-refresh').click();await settle();
+  assert.match(s.$('#earnings-total').textContent,/\$32\.00/);
+  assert.equal(s.$('#earnings-month').textContent,'Reconnect Facebook');
+  assert.match(s.$('#earnings-status').textContent,/last fetched estimate/);
+  assert.match(s.$('#earnings-card').getAttribute('aria-label'),/expired/);
+  s.w.__earnings={available:true,amount:33,currency:'USD',endAt:Date.now(),updatedAt:Date.now(),values:[]};
+  s.$('#earnings-refresh').click();await settle();
+  assert.match(s.$('#earnings-total').textContent,/\$33\.00/);assert.equal(s.$('#earnings-card').dataset.status,'ready');
+  s.w.__earnings={available:false,errorCode:190,error:'Token expired.'};s.data.settings.pageId='456';
+  await s.w.__poll();await settle();assert.equal(s.$('#earnings-total').textContent,'—');
+  assert.equal(s.$('#earnings-month').textContent,'Reconnect Facebook');
+});
+
+test('earnings total remains visible without a chart and Check again reloads it',async t=>{
+  const s=await setup(t);s.w.__earnings={...s.w.__earnings,amount:.87,values:[],warning:'Daily earnings are unavailable.'};
+  await s.w.__poll();await settle();assert.match(s.$('#earnings-total').textContent,/0\.87/);assert.match(s.$('#earnings-status').textContent,/Daily earnings are unavailable/);assert.equal(s.$('#earnings-days').children.length,0);
+  s.w.__earnings={...s.w.__earnings,amount:.90,source:'daily',reportedDays:2,periodLabel:'October earnings',warning:'Total of 2 reported daily buckets.'};
+  s.$('#earnings-refresh').click();await settle();assert.equal(s.w.__earningsRequests,2);assert.match(s.$('#earnings-total').textContent,/0\.90/);assert.match(s.$('#earnings-period').textContent,/October earnings/);
+});
+
+test('compact earnings tile opens private details and returns focus when closed',async t=>{
+  const s=await setup(t);await s.w.__poll();await settle();
+  assert.ok(s.$('.kpis #earnings-card'));assert.equal(s.$('#earnings-card').getAttribute('aria-controls'),'earnings-dialog');assert.equal(s.$('#earnings-dialog').open,false);
+  s.$('#earnings-card').click();assert.equal(s.$('#earnings-dialog').open,true);assert.match(s.$('#earnings-detail-total').textContent,/32\.00/);
+  s.$('#close-earnings').click();assert.equal(s.w.document.activeElement,s.$('#earnings-card'));
+  s.$('#earnings-card').click();s.data.readOnly=true;await s.w.__poll();await settle();
+  assert.equal(s.$('#earnings-dialog').open,false);assert.equal(s.$('#earnings-detail-total').textContent,'—');assert.ok(!s.$('#earnings-card').getAttribute('aria-label').includes('32.00'));
+});
 
 test('themed publishing dialog previews edits, defaults to Keep editing, and Cancel sends nothing',async t=>{
   const s=await setup(t,[comment('one')]);s.w.__autoPublish=false;s.input(s.$('[data-draft="one"]'),'My exact edited reply.');
@@ -596,7 +645,7 @@ test('the header shows the Page name and exact follower count on every screen',a
 
 test('owner legacy history transfers to the shared server metric and shows the 24h change',async t=>{
   const s=await setup(t);
-  s.w.localStorage.setItem('socialite:followers:123',JSON.stringify([[Date.now()-26*3600e3,7760],[Date.now()-3*3600e3,7761]]));
+  s.w.localStorage.setItem('socialite:followers:123',JSON.stringify([[Date.now()-24*3600e3,7760],[Date.now()-3*3600e3,7761]]));
   s.data.facebook.followersCount=7763;s.data.facebook.followersUpdatedAt=Date.now();s.data.live={on:true};
   await s.w.__poll();await settle();
   assert.equal(s.$('#head-followers').textContent,'7,763');
@@ -743,18 +792,18 @@ test('a fresh viewer cannot invent a 24h gain from a short local history',async 
 });
 
 
-test('short owner history migrates successfully and visitors show the same observed gain',async t=>{
+test('short owner history migrates without mislabeling it as a 24-hour gain',async t=>{
   const s=await setup(t),now=Date.now();
   s.w.localStorage.setItem('socialite:followers:123',JSON.stringify([[now-10*3600e3,8381],[now-60000,8971]]));
   Object.assign(s.data.facebook,{followersCount:8971,followersUpdatedAt:now,followersHistoryReady:false,followersDelta24h:null});
   await s.w.__poll();await settle();
-  assert.equal(s.$('#head-delta').textContent,'+590 since tracking');
+  assert.equal(s.$('#head-delta').textContent,'');
   assert.equal(s.calls.filter(c=>c.path==='/api/facebook/follower-history').length,1);
   assert.equal(s.data.facebook.followersObservedChange,590);
   s.w.Date.now=()=>now+6*60000;await s.w.__poll();await settle();
   assert.equal(s.calls.filter(c=>c.path==='/api/facebook/follower-history').length,1,'successful transfer is not repeated every five minutes');
   s.data.readOnly=true;await s.w.__poll();await settle();
-  assert.equal(s.$('#head-delta').textContent,'+590 since tracking');
+  assert.equal(s.$('#head-delta').textContent,'');
 });
 
 test('failed follower transfer reports the server error instead of hiding it',async t=>{

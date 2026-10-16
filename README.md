@@ -20,6 +20,8 @@ These files are the same code as the local app: `src/workflow.js`, `src/facebook
 
 ## Commands
 
+Signed-in owners can view the current month's total approximate earnings and daily chart in the inbox. `/api/earnings` requires a valid session, uses `Cache-Control: no-store`, and is never included in public dashboard data. Amounts come directly from Meta's `monetization_approximate_earnings` daily metric with `date_preset=this_month`; each daily bucket is counted once. The separate `content_monetization_earnings` metric supplies currency metadata only: its differently scaled `microAmount` is never used to calculate the total. If currency metadata is unavailable, the amount remains visible without a guessed currency symbol. Results are cached privately for 5 minutes per Page/token/reporting month; unavailable data retries after one minute. Check again can refresh a cached result at most once per minute. The Page token needs `read_insights` and `pages_read_engagement`; empty results trigger a private token-permission check so missing permissions can be identified. Generate a replacement Page token with missing permissions and save it in Connections. Estimates can differ from final payouts.
+
 ```powershell
 npm install          # once
 npm test             # unit tests (Node)

@@ -22,6 +22,7 @@ export class Facebook {
     const result=await response.json();
     if(!response.ok||result.error) {
       const error=new Error(`Facebook request failed (code ${result.error?.code||response.status}). Check Page permissions and token in Meta.`);
+      error.facebookCode=Number(result.error?.code)||response.status;
       error.definite=response.status>=400&&response.status<500; throw error;
     }
     return result;
@@ -104,6 +105,16 @@ export class Facebook {
     const app=await (await this.fetch(this.graph()+'app?fields=id&access_token='+encodeURIComponent(token),{signal:AbortSignal.timeout(30000)})).json();
     if(!app.id) throw new Error('Facebook rejected the Page token: '+(app.error?.message||'unknown error'));
     return {id:app.id,token:app.id+'|'+secret};
+  }
+  async insightsPermissions(){
+    try{
+      const app=await this.metaApp(),url=new URL(this.graph()+'debug_token');
+      url.searchParams.set('input_token',this.vault.get('facebookToken'));
+      const response=await this.fetch(url,{headers:{Authorization:'Bearer '+app.token},signal:AbortSignal.timeout(30000)});
+      const result=await response.json();
+      if(!response.ok||result.error||result.data?.is_valid!==true||!Array.isArray(result.data.scopes))return null;
+      return {readInsights:result.data.scopes.includes('read_insights'),readEngagement:result.data.scopes.includes('pages_read_engagement')};
+    }catch{return null;}
   }
   // The address Meta currently sends Page comments to, or '' when none is set.
   async webhookTarget() {

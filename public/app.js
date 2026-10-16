@@ -1,6 +1,7 @@
 let state, filter='new', loading=false, search='', selected=null;
 let stateETag='',pollRetryAt=0,visitorMode=false,visitorNextAt=0;
 let cloudflareUsage=null,cloudflareNextAt=0,cloudflareLoading=false;
+let earningsNextAt=0,earningsLoading=false,earningsPage='';
 const draftEdits=new Map();
 const ideaEdits=new Map(),ideaModes=new Map();
 let memoryOffset=0,memorySignature='',memoryRequest=0;
@@ -30,6 +31,8 @@ const typing=el=>!!el&&(el.isContentEditable||['INPUT','TEXTAREA','SELECT'].incl
 
 function applyVisitorAccess(){
   const guest=!!state?.readOnly;
+  $('#earnings-card').hidden=guest||!state;
+  if(guest){clearEarnings();if($('#earnings-dialog').open)$('#earnings-dialog').close();earningsNextAt=0;earningsPage='';}
   $('#visitor-access').hidden=!guest;
   if(!guest)return;
   document.querySelectorAll('button,input,select,textarea').forEach(el=>{
@@ -319,6 +322,7 @@ function renderPagebar(){
   $('.pagebar').dataset.live=String(ok&&live);
   $('#head-page').textContent=name;
   $('#head-logo').hidden=!ok;$('#head-initial').hidden=ok;
+  $('#head-monetization').hidden=!ok;
   $('#head-initial').textContent=ok?name.trim().slice(0,1).toUpperCase():'?';
   $('#head-dot').dataset.on=String(ok);
   $('#head-sync').textContent=!ok?'Not connected':live?'Live on Facebook':'Paused while Live Off';
@@ -334,10 +338,10 @@ function renderPagebar(){
   }else{age.textContent='';age.title='';age.removeAttribute('aria-label');}
   countTo(has?n:null);
   drawTrend(has&&Array.isArray(fb.followersHistory)?fb.followersHistory:[]);
-  const delta=$('#head-delta'),full=Number.isFinite(fb.followersDelta24h),d=has?(full?fb.followersDelta24h:Number.isFinite(fb.followersObservedChange)?fb.followersObservedChange:null):null;
+  const delta=$('#head-delta'),d=has&&Number.isFinite(fb.followersDelta24h)?fb.followersDelta24h:null;
   delta.classList.remove('up','down');
-  delta.textContent=d===null?'':d?(d>0?'+':'')+d.toLocaleString()+(full?' in 24h':' since tracking'):'';
-  delta.title=has?(full?'Change based on the shared 24-hour Facebook follower history.':fb.followersTrackingSince?'Recorded change since '+new Date(fb.followersTrackingSince).toLocaleString()+'. A full 24-hour baseline is not available yet.':'Follower history is being collected.'):'';
+  delta.textContent=d===null?'':d?(d>0?'+':'')+d.toLocaleString()+' in 24h':'';
+  delta.title=d!==null?'Change based on the shared 24-hour Facebook follower history.':'';
   if(d)delta.classList.add(d>0?'up':'down');
   $('#head-next').style.setProperty('--p',has&&at&&live?Math.min(1,Math.max(0,(Date.now()-at)/SYNC_MS)).toFixed(3):'0');
 }
@@ -550,7 +554,7 @@ function approveSelected(){
 }
 document.addEventListener('keydown',event=>{
   if(!state||state.readOnly)return;
-  if($('#cloudflare-dialog').open||$('#publish-dialog').open)return;
+  if($('#cloudflare-dialog').open||$('#publish-dialog').open||$('#earnings-dialog').open)return;
   if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();openPalette();return;}
   if(event.key==='Escape'){if(!$('#palette').hidden)return closePalette();if(!$('#test-form').hidden)return hideTest();disarm();return;}
   if(!$('#palette').hidden||typing(event.target)||event.ctrlKey||event.metaKey||event.altKey)return;
@@ -663,7 +667,53 @@ async function refreshCloudflare(){
 $('#open-cloudflare').onclick=()=>{$('#cloudflare-dialog').showModal();renderCloudflare();refreshCloudflare();};
 $('#close-cloudflare').onclick=()=>$('#cloudflare-dialog').close();
 $('#cloudflare-dialog').addEventListener('close',()=>$('#open-cloudflare').focus());
-async function pollDashboard(){if(visitorMode&&Date.now()<visitorNextAt)return;if(document.hidden||Date.now()<pollRetryAt)return;await refresh().catch(error=>notice(error.message,true));if(Date.now()>=pollRetryAt)await refreshCloudflare();}
+function clearEarnings(){
+  $('#earnings-total').textContent='—';$('#earnings-detail-total').textContent='—';$('#earnings-status').textContent='';$('#earnings-days').replaceChildren();
+  $('#earnings-card').dataset.status='loading';$('#earnings-card').title='';$('#earnings-card').setAttribute('aria-label','Approximate earnings. Open earnings details.');
+  $('#earnings-month').textContent='This month · Estimate';$('#earnings-period').textContent='This month';
+}
+function showEarningsError(message,label='Update unavailable'){
+  const card=$('#earnings-card'),hasAmount=$('#earnings-total').textContent!=='—';
+  $('#earnings-status').textContent=message+(hasAmount?' Showing the last fetched estimate.':'');
+  card.dataset.status='error';$('#earnings-month').textContent=label;card.title=$('#earnings-status').textContent;
+  card.setAttribute('aria-label',(hasAmount?$('#earnings-total').textContent+'. Last fetched estimate. ':'Approximate earnings unavailable. ')+message);
+}
+async function refreshEarnings(force=false){
+  if(!state||state.readOnly||document.hidden||earningsLoading)return;
+  const page=state.settings.pageId;
+  if(page!==earningsPage){earningsNextAt=0;earningsPage=page;clearEarnings();}
+  if(!force&&Date.now()<earningsNextAt)return;
+  earningsLoading=true;earningsNextAt=Date.now()+5*60*1000;
+  $('#earnings-refresh').disabled=true;$('#earnings-refresh').setAttribute('aria-busy','true');
+  try{
+    const response=await fetch('/api/earnings'+(force?'?refresh=1':''),{cache:'no-store'});
+    if(response.status===401){await refresh();return;}
+    if(!response.ok)throw Error('Cannot load earnings right now.');
+    const data=await response.json();
+    if(state.readOnly||state.settings.pageId!==page)return;
+    earningsNextAt=Date.now()+(data.retryAfterSeconds||(!data.available?60:300))*1000;
+    if(!data.available){showEarningsError(data.error||'Earnings are not available yet.',data.errorCode===190?'Reconnect Facebook':'Update unavailable');return;}
+    clearEarnings();
+    const formatter=new Intl.NumberFormat('en-SG',data.currency?{style:'currency',currency:data.currency,currencyDisplay:'code'}:{minimumFractionDigits:2,maximumFractionDigits:2}),money=amount=>formatter.format(amount);
+    $('#earnings-period').textContent=data.periodLabel||'This month';
+    $('#earnings-month').textContent=(data.periodLabel||'This month').replace(/ earnings$/i,'')+' · Estimate';
+    const tileFormatter=new Intl.NumberFormat('en-SG',data.currency?{style:'currency',currency:data.currency,currencyDisplay:'narrowSymbol'}:{minimumFractionDigits:2,maximumFractionDigits:2});
+    $('#earnings-total').innerHTML=tileFormatter.formatToParts(data.amount).map(part=>part.type==='currency'?'<span class="money-currency">'+esc(part.value)+'</span>':esc(part.value)).join('');
+    $('#earnings-detail-total').textContent=money(data.amount);$('#earnings-card').dataset.status='ready';
+    $('#earnings-card').setAttribute('aria-label',(data.periodLabel||'This month')+': '+money(data.amount)+' approximate earnings. Open daily breakdown.');
+    const stamp=at=>new Date(at).toLocaleString('en-SG',{timeZone:'Asia/Singapore',month:'short',day:'numeric',hour:'2-digit',minute:'2-digit'});
+    $('#earnings-status').textContent='Latest reported day ending '+stamp(data.endAt)+' SGT · '+data.values.length+' daily '+(data.values.length===1?'entry':'entries')+' · Updated '+stamp(data.updatedAt)+' SGT'+(data.warning?' · '+data.warning:'');
+    const max=Math.max(...data.values.map(row=>Math.abs(row.amount)),.01);
+    for(const row of data.values){const bar=document.createElement('span');bar.className='earnings-day';bar.tabIndex=0;bar.style.height=Math.max(2,Math.abs(row.amount)/max*64)+'px';bar.title='Day ending '+stamp(row.endAt)+' SGT: '+money(row.amount);bar.setAttribute('aria-label',bar.title);$('#earnings-days').append(bar);}
+  }catch(error){earningsNextAt=Date.now()+60000;if(state&&!state.readOnly&&state.settings.pageId===page)showEarningsError(error.message);}
+  finally{earningsLoading=false;$('#earnings-refresh').disabled=!!state?.readOnly;$('#earnings-refresh').removeAttribute('aria-busy');}
+}
+$('#earnings-refresh').onclick=()=>refreshEarnings(true);
+$('#earnings-card').onclick=()=>{if(!state||state.readOnly)return;$('#earnings-dialog').showModal();refreshEarnings();};
+$('#close-earnings').onclick=()=>$('#earnings-dialog').close();
+$('#earnings-dialog').addEventListener('close',()=>{if(state&&!state.readOnly)$('#earnings-card').focus();});
+async function pollDashboard(){if(visitorMode&&Date.now()<visitorNextAt)return;if(document.hidden||Date.now()<pollRetryAt)return;await refresh().catch(error=>notice(error.message,true));if(Date.now()>=pollRetryAt)await Promise.all([refreshCloudflare(),refreshEarnings()]);}
 setInterval(pollDashboard,5000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden)pollDashboard();});
 refreshCloudflare();
+refreshEarnings();

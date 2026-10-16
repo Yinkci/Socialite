@@ -68,7 +68,7 @@ test('a short legacy history is preserved and survives a simultaneous follower r
 });
 
 test('existing Facebook refresh saves shared history without another Facebook request',async()=>{
-  const previous=Date.now()-25*hour;
+  const previous=Date.now()-24*hour-2*60000;
   let settings={pageId:'123',graphVersion:'v26.0',facebookPage:{id:'123',name:'Page',followersCount:8381,followersUpdatedAt:previous}},calls=0,writes=0;
   const fb=new Facebook({settings:()=>settings,saveSettings:s=>{settings=s;writes++;}},{get:()=> 'test-token'},async()=>{
     calls++;return {ok:true,json:async()=>({id:'123',name:'Page',followers_count:8971})};
@@ -77,4 +77,15 @@ test('existing Facebook refresh saves shared history without another Facebook re
   assert.equal(calls,1);assert.equal(writes,1);assert.equal(followerMetrics(settings.facebookPage).followersDelta24h,590);
   const history=settings.facebookPage.followersHistory;
   await fb.verify(false);assert.deepEqual(settings.facebookPage.followersHistory,history);
+});
+
+
+test('recovered snapshot readings restore the 24-hour baseline without replacing current counts',()=>{
+  const at=Date.parse('2026-10-16T13:25:00+08:00');
+  const page={followersCount:10194,followersUpdatedAt:at,followersHistory:[[at-63*hour,8980],[at-hour,10172],[at,10194]]};
+  assert.equal(followerMetrics(page,at).followersDelta24h,null);
+  const history=importFollowerReadings(page,[[at-24*hour-60000,9975],[at-hour,10170],[at,10194]],at);
+  assert.equal(history.find(p=>p[0]===at-hour)[1],10172);
+  const metrics=followerMetrics({...page,followersHistory:history},at);
+  assert.equal(metrics.followersDelta24h,219);assert.equal(metrics.followersHistoryReady,true);
 });

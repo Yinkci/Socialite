@@ -16,7 +16,7 @@ export function followerReadings(readings,now=Date.now()){
 }
 export function followerMetrics(page,now=Date.now()){
   const history=followerReadings([...(Array.isArray(page?.followersHistory)?page.followersHistory:[]),[page?.followersUpdatedAt,page?.followersCount]],now);
-  const cutoff=now-DAY,baseline=history.filter(p=>p[0]<=cutoff).at(-1);
+  const cutoff=now-DAY,baseline=boundaryReading(history,cutoff);
   const current=Number.isSafeInteger(page?.followersCount)&&page.followersCount>=0;
   const observed=baseline||history[0];
   const chartCutoff=Math.floor(now/3600e3)*3600e3-DAY,chartBaseline=history.findLast(p=>p[0]<=chartCutoff);
